@@ -1,0 +1,40 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node / build
+app/node_modules/
+app/out/
+app/dist/
+app/.vite/
+app/.turbo/
+app/coverage/
+app/.eslintcache
+app/*.tsbuildinfo
+
+# Temp / local artifacts
+.tmp/
+tmp/
+.cache/
+
+# OS / misc
+Thumbs.db

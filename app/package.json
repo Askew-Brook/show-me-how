@@ -1,0 +1,52 @@
+{
+  "name": "show-me-how-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Working prototype for ShowMeHow",
+  "main": "out/main/index.js",
+  "bin": {
+    "smh-cli": "./bin/smh-cli.mjs"
+  },
+  "build": {
+    "appId": "com.showmehow.prototype",
+    "productName": "ShowMeHow",
+    "fileAssociations": [
+      {
+        "ext": "smh",
+        "name": "ShowMeHow Script",
+        "description": "ShowMeHow presentation script",
+        "role": "Editor"
+      }
+    ]
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "cli": "node ./bin/smh-cli.mjs"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "highlight.js": "^11.11.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.21",
+    "electron": "^37.2.0",
+    "electron-vite": "^5.0.0",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3",
+    "vite": "^7.3.1",
+    "vitest": "^3.2.4"
+  }
+}

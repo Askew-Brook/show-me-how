@@ -1,0 +1,84 @@
+@import 'highlight.js/styles/github-dark.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.smh-code-scroll {
+  scrollbar-gutter: stable;
+}
+
+.hljs {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: #6b7280;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #c084fc;
+}
+
+.hljs-string,
+.hljs-title,
+.hljs-name,
+.hljs-type,
+.hljs-attribute,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: #86efac;
+}
+
+.hljs-number,
+.hljs-meta,
+.hljs-variable,
+.hljs-regexp,
+.hljs-deletion {
+  color: #fca5a5;
+}
+
+.hljs-built_in,
+.hljs-function,
+.hljs-class .hljs-title {
+  color: #7dd3fc;
+}
+
+.hljs-params {
+  color: #e5e7eb;
+}
