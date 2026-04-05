@@ -1,15 +1,17 @@
 {
-  "name": "show-me-how-prototype",
+  "name": "show-me-how-alpha",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Working prototype for ShowMeHow",
+  "description": "ShowMeHow Alpha by Askew Brook",
+  "author": "Askew Brook",
+  "license": "MIT-0",
   "main": "out/main/index.js",
   "bin": {
     "smh-cli": "./bin/smh-cli.mjs"
   },
   "build": {
-    "appId": "com.showmehow.prototype",
+    "appId": "uk.co.askewbrook.showmehow",
     "productName": "ShowMeHow",
     "fileAssociations": [
       {
@@ -42,6 +44,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.21",
     "electron": "^37.2.0",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",

@@ -35,6 +35,10 @@ app/*.tsbuildinfo
 .tmp/
 tmp/
 .cache/
+bundle-output/
+
+# Local app binaries
+ShowMeHow.app/
 
 # OS / misc
 Thumbs.db

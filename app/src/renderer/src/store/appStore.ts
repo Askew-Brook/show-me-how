@@ -161,7 +161,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects: bootState.projects,
       currentProjectId: bootState.currentProjectId,
       pendingScriptPath: bootState.pendingScriptPath,
-      projectSelectorOpen: bootState.currentProjectId === null || Boolean(bootState.pendingScriptPath),
+      projectSelectorOpen: bootState.currentProjectId === null || (Boolean(bootState.pendingScriptPath) && !currentProject),
       script: initialScript.content,
       scriptPath: initialScript.path
     })
@@ -171,6 +171,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     })
 
     window.addEventListener('beforeunload', () => unsubscribe(), { once: true })
+
+    if (currentProject && bootState.pendingScriptPath) {
+      await window.smh.clearPendingScript()
+      set({ pendingScriptPath: null, projectSelectorOpen: false })
+      const valid = await get().validate()
+      if (valid) {
+        await get().play()
+      }
+      return
+    }
 
     if (currentProject && !bootState.pendingScriptPath) {
       await get().validate()
@@ -299,7 +309,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects: state.projects.map((item) => (item.id === project.id ? project : item)).sort(compareProjects)
     }))
 
-    await get().validate()
+    const valid = await get().validate()
+    if (pendingScriptPath && valid) {
+      await get().play()
+    }
   },
 
   validate: async () => {
@@ -455,9 +468,12 @@ async function handleIncomingExternalScript(scriptPath: string, set: StoreSet, g
   const loaded = await loadExternalScript(scriptPath)
   activeRunId += 1
 
+  const project = currentProjectFor(get)
+  const hasProject = Boolean(project)
+
   set({
-    pendingScriptPath: scriptPath,
-    projectSelectorOpen: true,
+    pendingScriptPath: hasProject ? null : scriptPath,
+    projectSelectorOpen: !hasProject,
     script: loaded.content,
     scriptPath: loaded.path,
     meta: {},
@@ -473,9 +489,13 @@ async function handleIncomingExternalScript(scriptPath: string, set: StoreSet, g
     tts: createDefaultTtsState(get().tts)
   })
 
-  const project = currentProjectFor(get)
-  if (project) {
-    await get().validate()
+  if (hasProject) {
+    await window.smh.clearPendingScript()
+    const valid = await get().validate()
+    if (valid) {
+      await get().play()
+    }
+    return
   }
 }
 

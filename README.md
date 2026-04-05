@@ -1,10 +1,11 @@
 # ShowMeHow
 
-Working spec split from `~/Downloads/show_me_how_v_1_spec.md`.
+ShowMeHow is owned and branded by **Askew Brook**, a UK-based web firm.
+The source code is licensed under **MIT-0**.
 
 ## Summary
 
-> Prototype update: the current working prototype is focused on **code walkthroughs only**. Browser panels and browser automation are deferred.
+> Alpha update: the current 0.1.0 alpha is focused on **code walkthroughs only**. Browser panels and browser automation are deferred.
 
 **SHOW ME HOW** is a desktop Electron application for playing scripted AI-guided presentations.
 
