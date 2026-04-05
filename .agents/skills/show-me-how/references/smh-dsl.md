@@ -6,7 +6,8 @@ This is the **current prototype** DSL guidance.
 
 - code walkthroughs only
 - no browser automation
-- no browser panels
+- browser panels are currently disabled in the app UI
+- external `.smh` open flow exists, but scripts should still stay deterministic and code-focused
 
 ## Core commands
 
@@ -113,11 +114,14 @@ These are disabled in the current prototype:
 
 ## Writing style guidance
 
+- Prefer relative file paths from the selected project root.
 - Use 1-2 code panels for most demos.
 - Move panel focus intentionally.
 - Highlight blocks first, then select key lines.
+- Use `select_code_line()` before `select_code()` unless you truly need exact end columns.
 - Use vendor framework files when they explain behavior.
 - Prefer short TTS after each visual change.
+- Add `pause()` between major beats.
 - Keep scripts deterministic and explicit.
 
 ## Example pattern

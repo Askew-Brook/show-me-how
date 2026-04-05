@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import showMeHowIcon from '../assets/showmehow-icon.svg'
 import type { ProjectImportResult, ProjectInput, ProjectRecord } from '../lib/projects'
 import { badgeClass, buttonClass, inputClass } from '../lib/ui'
 
@@ -126,8 +127,14 @@ export default function ProjectSelector({
     return (
       <div className={pageClass}>
         <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-5 py-8">
-          <header className="mb-6">
-            <h1 className="text-base font-semibold text-[#f4f6f8]">Choose project</h1>
+          <header className="mb-6" data-dev-label="project-selector.brand">
+            <div className="mb-3 flex items-center gap-3">
+              <img src={showMeHowIcon} alt="ShowMeHow" className="h-11 w-11 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.35)]" />
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c8b07e]">ShowMeHow</div>
+                <h1 className="text-base font-semibold text-[#f4f6f8]">Choose project</h1>
+              </div>
+            </div>
             <div className="mt-3 rounded-md border border-[#34383e] bg-[#202327] px-4 py-3">
               <div className="text-sm text-[#eef1f4]">{basename(pendingScriptPath)}</div>
               <div className="mt-1 text-xs text-[#8b929c]">{dirname(pendingScriptPath)}</div>
@@ -236,11 +243,15 @@ export default function ProjectSelector({
   return (
     <div className={pageClass}>
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 py-5">
-        <header className="mb-5 border-b border-[#34383e] pb-4">
+        <header className="mb-5 border-b border-[#34383e] pb-4" data-dev-label="project-selector.brand">
           <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h1 className="text-base font-semibold text-[#f4f6f8]">Projects</h1>
-              <div className="mt-1 text-sm text-[#a7adb6]">Pick a codebase or import a set of repos.</div>
+            <div className="flex items-center gap-3">
+              <img src={showMeHowIcon} alt="ShowMeHow" className="h-11 w-11 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.35)]" />
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c8b07e]">ShowMeHow</div>
+                <h1 className="text-base font-semibold text-[#f4f6f8]">Projects</h1>
+                <div className="mt-1 text-sm text-[#a7adb6]">Pick a codebase or import a set of repos.</div>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 text-[11px] text-[#8b929c]">

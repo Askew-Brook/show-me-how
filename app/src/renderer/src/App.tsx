@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import showMeHowIcon from './assets/showmehow-icon.svg'
 import CodePanel from './components/CodePanel'
 import CommandPalette, { type PaletteItem } from './components/CommandPalette'
 import DevModeOverlay from './components/DevModeOverlay'
@@ -812,7 +813,13 @@ export default function App() {
           <header className="border-b border-[#34383e] bg-[#202327] px-4 py-2.5" data-dev-label="workspace.header">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-[280px] flex-1">
-                <h1 className="text-sm font-medium text-[#f4f6f8]">{meta.title || 'ShowMeHow'}</h1>
+                <div className="flex items-center gap-2" data-dev-label="workspace.brand">
+                  <img src={showMeHowIcon} alt="ShowMeHow" className="h-8 w-8 rounded-xl shadow-[0_12px_32px_rgba(0,0,0,0.35)]" />
+                  <div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c8b07e]">ShowMeHow</div>
+                    <h1 className="text-sm font-medium text-[#f4f6f8]">{meta.title || 'Walkthrough workspace'}</h1>
+                  </div>
+                </div>
                 <div className={`mt-0.5 text-[11px] ${mutedTextClass}`}>
                   {currentProject ? `${currentProject.name} · ${currentProject.rootPath}` : 'No project selected'}
                 </div>

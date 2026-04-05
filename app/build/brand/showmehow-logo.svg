@@ -1,0 +1,19 @@
+<svg width="1400" height="360" viewBox="0 0 1400 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="52" y1="36" x2="308" y2="324" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22252B"/>
+      <stop offset="1" stop-color="#111318"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="104" y1="108" x2="276" y2="254" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF1C7"/>
+      <stop offset="1" stop-color="#E3C27A"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1400" height="360" rx="40" fill="#0E1014"/>
+  <rect x="36" y="36" width="288" height="288" rx="72" fill="url(#bg)"/>
+  <text x="180" y="215" text-anchor="middle" fill="url(#ink)" font-family="'SF Pro Display','Inter','Helvetica Neue',Arial,sans-serif" font-size="86" font-weight="700" letter-spacing="-6">SMH</text>
+
+  <text x="384" y="160" fill="#F4F6F8" font-family="'SF Pro Display','Inter','Helvetica Neue',Arial,sans-serif" font-size="88" font-weight="700" letter-spacing="-2">ShowMeHow</text>
+  <text x="388" y="222" fill="#AAB2BC" font-family="'SF Pro Text','Inter','Helvetica Neue',Arial,sans-serif" font-size="26" font-weight="500">Scripted walkthroughs with narration</text>
+</svg>

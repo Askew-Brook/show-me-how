@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="120" x2="864" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22252B"/>
+      <stop offset="1" stop-color="#111318"/>
+    </linearGradient>
+    <linearGradient id="stroke" x1="180" y1="140" x2="844" y2="884" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="290" y1="320" x2="738" y2="712" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF1C7"/>
+      <stop offset="1" stop-color="#E3C27A"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="232" fill="#0B0D11"/>
+  <rect x="112" y="112" width="800" height="800" rx="180" fill="url(#bg)"/>
+  <rect x="113" y="113" width="798" height="798" rx="179" stroke="url(#stroke)" stroke-width="2"/>
+
+  <text x="512" y="592" text-anchor="middle" fill="url(#ink)" font-family="'SF Pro Display','Inter','Helvetica Neue',Arial,sans-serif" font-size="248" font-weight="700" letter-spacing="-18">SMH</text>
+</svg>

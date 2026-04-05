@@ -2,6 +2,10 @@
 
 import type { ProjectBootState, ProjectRecord, RecentPresentationEntry } from './lib/projects'
 
+declare module 'monaco-editor/esm/vs/editor/editor.api' {
+  export * from 'monaco-editor'
+}
+
 declare global {
   interface Window {
     smh: {

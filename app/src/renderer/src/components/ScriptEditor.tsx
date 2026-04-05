@@ -1,6 +1,7 @@
 import Editor, { loader } from '@monaco-editor/react'
 import { useEffect, useMemo, useRef } from 'react'
-import * as monaco from 'monaco-editor'
+import type * as Monaco from 'monaco-editor'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import type { Diagnostic } from '../lib/parser'
 import { parseDocument } from '../lib/parser'
@@ -34,7 +35,7 @@ function mergeDiagnostics(primary: Diagnostic[], secondary: Diagnostic[]) {
 }
 
 export default function ScriptEditor({ value, path, diagnostics = [], onChange }: ScriptEditorProps) {
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null)
   const parseDiagnostics = useMemo(() => parseDocument(value).diagnostics, [value])
   const allDiagnostics = useMemo(() => mergeDiagnostics(parseDiagnostics, diagnostics), [parseDiagnostics, diagnostics])
 

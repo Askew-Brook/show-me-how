@@ -1,6 +1,6 @@
 {
   "name": "show-me-how-alpha",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "description": "ShowMeHow Alpha by Askew Brook",
@@ -13,6 +13,19 @@
   "build": {
     "appId": "uk.co.askewbrook.showmehow",
     "productName": "ShowMeHow",
+    "compression": "maximum",
+    "files": [
+      "out/**/*",
+      "bin/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "mac": {
+      "icon": "build/brand/ShowMeHow.icns",
+      "target": [
+        "dir"
+      ]
+    },
     "fileAssociations": [
       {
         "ext": "smh",
@@ -25,6 +38,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "dist": "npm run build && electron-builder --mac dir --arm64 --config.directories.output=../bundle-output",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

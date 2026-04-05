@@ -18,7 +18,9 @@ Use this skill when you need to:
 - The **ShowMeHow app must already be running**.
 - The current prototype is **code walkthroughs only**.
 - **Do not use browser commands** in scripts for the current prototype.
+- Browser panels are currently disabled in the app UI.
 - Project-relative file paths are preferred in `open_code()`.
+- The app now supports external `.smh` open flow and will try to auto-play after opening when project selection is already resolved.
 
 ## CLI location
 
@@ -29,6 +31,14 @@ node app/bin/smh-cli.mjs health
 ```
 
 If that fails, ask the user to open the ShowMeHow app first.
+
+## Useful app/build paths
+
+- Main packaged app: `bundle-output/mac-arm64/ShowMeHow.app`
+- Package command: `cd app && npm run dist`
+- Dev build only: `cd app && npm run build`
+
+If testing packaged behavior after a rebuild, fully quit the app and reopen the packaged app.
 
 ## Core CLI commands
 
@@ -82,6 +92,8 @@ node app/bin/smh-cli.mjs stop
 node app/bin/smh-cli.mjs next-step
 ```
 
+Note: `play` can still be less reliable from the CLI on long-running or interrupted sessions. If it times out, validate/push via CLI and press Play in the app manually.
+
 ### Read app state
 ```bash
 node app/bin/smh-cli.mjs state
@@ -118,6 +130,8 @@ node app/bin/smh-cli.mjs state --json
 
 ## Script authoring rules for the current prototype
 
+When editing UI code or adding any new visual control while working on ShowMeHow itself, also keep the dev-mode overlay labels up to date.
+
 Read the DSL notes in [references/smh-dsl.md](references/smh-dsl.md).
 
 ### Use these commands heavily
@@ -139,6 +153,12 @@ Read the DSL notes in [references/smh-dsl.md](references/smh-dsl.md).
 - `click_text`
 - `type_text`
 - `wait_for_text`
+- `wait_for_navigation`
+- `highlight_text`
+- `press_key`
+- `browser_back`
+- `browser_forward`
+- `browser_reload`
 - all other browser actions
 
 They are disabled in the app right now.

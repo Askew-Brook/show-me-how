@@ -6,6 +6,13 @@ Base command from repo root:
 node app/bin/smh-cli.mjs <command>
 ```
 
+Useful related commands:
+
+```bash
+cd app && npm run build
+cd app && npm run dist
+```
+
 ## Commands
 
 ### `health`
@@ -34,6 +41,8 @@ Runs parser and validation in the app and returns diagnostics.
 
 ### `play`
 Switches the app into presentation mode and starts playback.
+
+Note: this can still time out from the CLI in some long-running or interrupted sessions even when the app itself is fine. If needed, use CLI for push/validate and then press Play in the app manually.
 
 ### `pause`
 Pauses playback.
@@ -72,3 +81,4 @@ If you get a connection failure:
 1. Make sure the ShowMeHow app is running.
 2. Retry `health`.
 3. If needed, restart the app and try again.
+4. For packaged-app testing, reopen `bundle-output/mac-arm64/ShowMeHow.app` after rebuilds.
