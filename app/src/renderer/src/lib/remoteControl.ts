@@ -63,11 +63,6 @@ async function executeRemoteCommand(command: Record<string, unknown>, setPresent
       }
     }
 
-    case 'load-sample':
-      store.loadSample()
-      setPresentationMode(false)
-      return { ok: true }
-
     case 'open-project': {
       const projectId = command.projectId == null ? null : Number(command.projectId)
       const projectName = command.projectName == null ? null : String(command.projectName)

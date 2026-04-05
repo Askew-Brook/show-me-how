@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('smh', {
   pickFile: (projectRootPath?: string | null) => ipcRenderer.invoke('dialog:pickFile', projectRootPath),
+  pickPresentationFile: (projectRootPath?: string | null) => ipcRenderer.invoke('dialog:pickPresentationFile', projectRootPath),
   pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
   readTextFile: (filePath: string, projectRootPath?: string | null) =>
     ipcRenderer.invoke('fs:readTextFile', filePath, projectRootPath),
@@ -13,12 +14,16 @@ contextBridge.exposeInMainWorld('smh', {
   synthesizeSpeechToFile: (text: string, options?: { voice?: string | null; rate?: number | null }) =>
     ipcRenderer.invoke('tts:synthesizeToFile', text, options),
   getBootState: () => ipcRenderer.invoke('projects:getBootState'),
-  createProject: (input: { name: string; rootPath: string; defaultScriptPath?: string | null }) =>
-    ipcRenderer.invoke('projects:create', input),
-  updateProject: (projectId: number, input: { name: string; rootPath: string; defaultScriptPath?: string | null }) =>
+  createProject: (input: { name: string; rootPath: string }) => ipcRenderer.invoke('projects:create', input),
+  updateProject: (projectId: number, input: { name: string; rootPath: string }) =>
     ipcRenderer.invoke('projects:update', projectId, input),
+  importProjectsFromParent: (parentPath: string) => ipcRenderer.invoke('projects:importFromParent', parentPath),
   deleteProject: (projectId: number) => ipcRenderer.invoke('projects:delete', projectId),
   setCurrentProject: (projectId: number) => ipcRenderer.invoke('projects:setCurrent', projectId),
+  clearCurrentProject: () => ipcRenderer.invoke('projects:clearCurrent'),
+  getRecentPresentationPaths: () => ipcRenderer.invoke('app:getRecentPresentationPaths'),
+  rememberRecentPresentationPath: (filePath: string, projectId?: number | null) =>
+    ipcRenderer.invoke('app:rememberRecentPresentationPath', filePath, projectId),
   clearPendingScript: () => ipcRenderer.invoke('app:clearPendingScript'),
   onExternalScriptOpened: (callback: (scriptPath: string) => void) => {
     const listener = (_event: unknown, scriptPath: string) => callback(scriptPath)

@@ -1,11 +1,12 @@
 /// <reference types="vite/client" />
 
-import type { ProjectBootState, ProjectRecord } from './lib/projects'
+import type { ProjectBootState, ProjectRecord, RecentPresentationEntry } from './lib/projects'
 
 declare global {
   interface Window {
     smh: {
       pickFile: (projectRootPath?: string | null) => Promise<string | null>
+      pickPresentationFile: (projectRootPath?: string | null) => Promise<string | null>
       pickFolder: () => Promise<string | null>
       readTextFile: (
         filePath: string,
@@ -19,13 +20,14 @@ declare global {
         options?: { voice?: string | null; rate?: number | null }
       ) => Promise<{ mimeType: string; base64Audio: string }>
       getBootState: () => Promise<ProjectBootState>
-      createProject: (input: { name: string; rootPath: string; defaultScriptPath?: string | null }) => Promise<ProjectRecord>
-      updateProject: (
-        projectId: number,
-        input: { name: string; rootPath: string; defaultScriptPath?: string | null }
-      ) => Promise<ProjectRecord>
+      createProject: (input: { name: string; rootPath: string }) => Promise<ProjectRecord>
+      updateProject: (projectId: number, input: { name: string; rootPath: string }) => Promise<ProjectRecord>
+      importProjectsFromParent: (parentPath: string) => Promise<import('./lib/projects').ProjectImportResult>
       deleteProject: (projectId: number) => Promise<ProjectBootState>
       setCurrentProject: (projectId: number) => Promise<ProjectRecord>
+      clearCurrentProject: () => Promise<ProjectBootState>
+      getRecentPresentationPaths: () => Promise<RecentPresentationEntry[]>
+      rememberRecentPresentationPath: (filePath: string, projectId?: number | null) => Promise<RecentPresentationEntry[]>
       clearPendingScript: () => Promise<void>
       onExternalScriptOpened: (callback: (scriptPath: string) => void) => () => void
       onControlCommand: (callback: (payload: { id: string; command: Record<string, unknown> }) => void) => () => void

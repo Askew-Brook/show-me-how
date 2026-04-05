@@ -1,21 +1,28 @@
-import { useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import CodePanel from './components/CodePanel'
+import CommandPalette, { type PaletteItem } from './components/CommandPalette'
+import DevModeOverlay from './components/DevModeOverlay'
 import ProjectSelector from './components/ProjectSelector'
+import ScriptEditor from './components/ScriptEditor'
 import { registerRemoteControl } from './lib/remoteControl'
+import { badgeClass, buttonClass, iconButtonClass } from './lib/ui'
 import { useAppStore } from './store/appStore'
 
-const speedOptions = [0.75, 1, 1.25, 1.5, 2]
+const appFrameClass = 'flex h-full flex-col bg-[#17181b] text-[#eef1f4]'
+const surfaceClass = 'rounded-md border border-[#34383e] bg-[#202327]'
+const raisedSurfaceClass = 'rounded-md border border-[#34383e] bg-[#202327]'
+const mutedTextClass = 'text-[#a7adb6]'
+const subtleTextClass = 'text-[#8b929c]'
 
-function buttonClass(variant: 'default' | 'primary' | 'ghost' = 'default') {
-  if (variant === 'primary') {
-    return 'rounded-md border border-emerald-500/60 bg-emerald-500 px-3 py-2 text-sm font-medium text-emerald-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50'
-  }
+function basename(filePath: string) {
+  return filePath.split(/[\\/]/).pop() || filePath
+}
 
-  if (variant === 'ghost') {
-    return 'rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-300 hover:bg-zinc-900 disabled:cursor-not-allowed disabled:opacity-50'
-  }
-
-  return 'rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50'
+function parentPath(filePath: string) {
+  const normalized = filePath.replace(/[\\/]+$/, '')
+  const parts = normalized.split(/[\\/]/)
+  parts.pop()
+  return parts.join('/') || '/'
 }
 
 function relativePath(filePath: string, rootPath?: string | null) {
@@ -29,6 +36,90 @@ function formatMs(ms: number) {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${minutes}:${String(seconds).padStart(2, '0')}`
+}
+
+function flashMessage(setMessage: (value: string) => void, message: string) {
+  setMessage(message)
+  window.setTimeout(() => setMessage(''), 4000)
+}
+
+function PlayIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M5 3.5v9l7-4.5-7-4.5Z" />
+    </svg>
+  )
+}
+
+function PauseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M4.5 3h2.5v10H4.5V3Zm4.5 0h2.5v10H9V3Z" />
+    </svg>
+  )
+}
+
+function StepIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 fill-current" aria-hidden="true">
+      <path d="M3.5 3.5v9l6-4.5-6-4.5Zm7 0h2v9h-2v-9Z" />
+    </svg>
+  )
+}
+
+function RestartIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 stroke-current" aria-hidden="true" fill="none" strokeWidth="1.5">
+      <path d="M4 4.5V2.75M4 2.75h1.75M4 2.75l2 2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4.75 5.25A4.75 4.75 0 1 1 3.5 8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 stroke-current" aria-hidden="true" fill="none" strokeWidth="1.5">
+      <path d="M4 4l8 8M12 4 4 12" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function VolumeIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4 stroke-current" aria-hidden="true" fill="none" strokeWidth="1.5">
+      <path d="M3.5 9.5h2l2.5 2v-7l-2.5 2h-2v3Z" strokeLinejoin="round" />
+      <path d="M10.75 5.5a3.5 3.5 0 0 1 0 5" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function IconButton({
+  title,
+  onClick,
+  disabled,
+  variant = 'ghost',
+  devLabel,
+  children
+}: {
+  title: string
+  onClick: () => void
+  disabled?: boolean
+  variant?: Parameters<typeof iconButtonClass>[0]
+  devLabel?: string
+  children: ReactNode
+}) {
+  return (
+    <button
+      aria-label={title}
+      title={title}
+      className={iconButtonClass(variant, 'sm')}
+      onClick={onClick}
+      disabled={disabled}
+      data-dev-label={devLabel}
+    >
+      {children}
+    </button>
+  )
 }
 
 function NarrationBar({
@@ -52,48 +143,47 @@ function NarrationBar({
   const active = tts.status !== 'idle' && Boolean(tts.text)
 
   return (
-    <div
-      className={`border-b px-4 py-2 transition-all ${
-        active ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-zinc-800 bg-zinc-900/30 opacity-70'
-      }`}
-    >
-      <div className="flex min-h-[42px] flex-wrap items-center gap-3">
-        <button
-          className={buttonClass(active ? 'default' : 'ghost')}
-          onClick={tts.status === 'paused' ? onResume : onPause}
-          disabled={!active}
-        >
-          {tts.status === 'paused' ? 'Resume voice' : 'Pause voice'}
-        </button>
-
-        <div className="min-w-[220px] flex-1">
-          <div className="truncate text-sm text-zinc-200">{tts.text || 'Narration idle'}</div>
+    <div className="border-b border-[#34383e] bg-[#202327] px-4 py-2" data-dev-label="presentation.narration-bar">
+      <div className="space-y-2">
+        <div className="rounded-md border border-[#34383e] bg-[#1b1e22] px-3 py-2" data-dev-label="presentation.narration-text">
+          <div className="h-10 overflow-y-auto text-[12px] leading-5 text-[#eef1f4]">{tts.text || 'Narration idle'}</div>
         </div>
 
-        <div className="flex min-w-[240px] flex-1 items-center gap-3">
-          <span className="w-10 text-right text-[11px] text-zinc-500">{formatMs(tts.progressMs)}</span>
+        <div className="flex items-center gap-2 text-[11px] text-[#a7adb6]" data-dev-label="presentation.narration-controls">
+          <IconButton
+            title={tts.status === 'paused' ? 'Resume' : 'Pause'}
+            onClick={tts.status === 'paused' ? onResume : onPause}
+            disabled={!active}
+            devLabel="presentation.narration-toggle"
+          >
+            {tts.status === 'paused' ? <PlayIcon /> : <PauseIcon />}
+          </IconButton>
+
+          <span className="w-9 text-right text-[#8b929c]">{formatMs(tts.progressMs)}</span>
+
           <input
-            className="flex-1 accent-emerald-400"
+            className="min-w-0 flex-1 accent-[#7b978a]"
             type="range"
             min={0}
             max={Math.max(1, Math.round(tts.durationMs) || 1)}
             value={Math.min(Math.round(tts.progressMs), Math.max(1, Math.round(tts.durationMs) || 1))}
             readOnly
           />
-          <span className="w-10 text-[11px] text-zinc-500">{formatMs(tts.durationMs)}</span>
-        </div>
 
-        <label className="flex items-center gap-2 text-[11px] text-zinc-400">
-          volume
-          <input
-            className="w-24 accent-emerald-400"
-            type="range"
-            min={0}
-            max={100}
-            value={Math.round(tts.volume * 100)}
-            onChange={(event) => onVolumeChange(Number(event.target.value) / 100)}
-          />
-        </label>
+          <span className="w-9 text-[#8b929c]">{formatMs(tts.durationMs)}</span>
+
+          <div className="flex items-center gap-1.5 text-[#8b929c]">
+            <VolumeIcon />
+            <input
+              className="w-20 accent-[#7b978a]"
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(tts.volume * 100)}
+              onChange={(event) => onVolumeChange(Number(event.target.value) / 100)}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -101,7 +191,11 @@ function NarrationBar({
 
 export default function App() {
   const [presentationMode, setPresentationMode] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [fileMessage, setFileMessage] = useState('')
+  const [devMode, setDevMode] = useState(false)
+  const [devOutlines, setDevOutlines] = useState(true)
+  const [devLastClicked, setDevLastClicked] = useState<string | null>(null)
 
   const {
     bootstrapped,
@@ -118,21 +212,20 @@ export default function App() {
     panelOrder,
     layoutMode,
     logs,
-    muteTts,
-    speedMultiplier,
+    recentPresentationPaths,
     tts,
     projects,
     currentProjectId,
     projectSelectorOpen,
     bootstrap,
     setScript,
-    loadSample,
-    setMuteTts,
-    setSpeedMultiplier,
+    openScript,
+    openRecentPresentation,
+    clearCurrentScript,
     setTtsVolume,
     openProjectSelector,
-    closeProjectSelector,
     createProject,
+    importProjectsFromParent,
     updateProject,
     deleteProject,
     chooseProject,
@@ -142,7 +235,7 @@ export default function App() {
     resume,
     restart,
     stop,
-    nextStep
+    skipForward
   } = useAppStore()
 
   useEffect(() => {
@@ -154,6 +247,37 @@ export default function App() {
     return unsubscribe
   }, [])
 
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setPaletteOpen((value) => !value)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  useEffect(() => {
+    if (!devMode) {
+      setDevLastClicked(null)
+      return
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-dev-label]') : null
+      if (!target?.dataset.devLabel) {
+        return
+      }
+
+      setDevLastClicked(target.dataset.devLabel)
+    }
+
+    window.addEventListener('pointerdown', handlePointerDown, true)
+    return () => window.removeEventListener('pointerdown', handlePointerDown, true)
+  }, [devMode])
+
   const currentProject = useMemo(
     () => projects.find((project) => project.id === currentProjectId) || null,
     [projects, currentProjectId]
@@ -163,6 +287,346 @@ export default function App() {
   const currentAction = actions[currentActionIndex]
   const recentLogs = useMemo(() => logs.slice(-8).reverse(), [logs])
   const hasPresentation = presentationMode || orderedPanels.length > 0 || status === 'paused' || status === 'playing'
+  const hasErrors = diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+  const issueTone = diagnostics.length === 0 ? 'success' : hasErrors ? 'danger' : 'warning'
+  const playbackTone = status === 'completed' ? 'success' : status === 'error' ? 'danger' : status === 'playing' ? 'warning' : 'neutral'
+  const scriptDisplay = scriptPath ? relativePath(scriptPath, currentProject?.rootPath) : null
+
+  async function handleImportProjects() {
+    const parentPath = await window.smh.pickFolder()
+    if (!parentPath) return
+
+    const result = await importProjectsFromParent(parentPath)
+    const parts = [`Imported ${result.imported}`]
+    if (result.skippedExisting) parts.push(`ignored ${result.skippedExisting} existing`)
+    if (result.skippedInvalid) parts.push(`skipped ${result.skippedInvalid} invalid`)
+    flashMessage(setFileMessage, parts.join(' · '))
+  }
+
+  async function copyText(value: string, successMessage: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      flashMessage(setFileMessage, successMessage)
+    } catch {
+      flashMessage(setFileMessage, 'Copy failed.')
+    }
+  }
+
+  function buildDevSummary() {
+    return [
+      `project=${currentProject?.name || 'none'}`,
+      `script=${scriptPath ? basename(scriptPath) : script.trim() ? 'unsaved' : 'none'}`,
+      `status=${status}`,
+      `presentation=${hasPresentation ? 'open' : 'closed'}`,
+      `action=${currentAction ? `${currentAction.sourceLine}:${currentAction.summary}` : 'none'}`,
+      `diagnostics=${diagnostics.length}`,
+      `panels=${orderedPanels.length}`,
+      `last=${devLastClicked || 'none'}`
+    ].join('\n')
+  }
+
+  async function handleCopyDevSummary() {
+    await copyText(buildDevSummary(), 'Copied dev summary.')
+  }
+
+  async function handleCopyLastDevLabel() {
+    if (!devLastClicked) {
+      flashMessage(setFileMessage, 'No dev label picked yet.')
+      return
+    }
+
+    await copyText(devLastClicked, `Copied dev label: ${devLastClicked}`)
+  }
+
+  async function handleToggleDevMode() {
+    setDevMode((value) => !value)
+    flashMessage(setFileMessage, devMode ? 'Dev mode off.' : 'Dev mode on.')
+  }
+
+  function handleToggleDevOutlines() {
+    setDevOutlines((value) => !value)
+    flashMessage(setFileMessage, devOutlines ? 'Dev outlines off.' : 'Dev outlines on.')
+  }
+
+  async function handleExitProject() {
+    setPresentationMode(false)
+    await openProjectSelector()
+    flashMessage(setFileMessage, 'Exited project.')
+  }
+
+  function handleClearCurrentScript() {
+    setPresentationMode(false)
+    clearCurrentScript()
+    flashMessage(setFileMessage, 'Cleared current script.')
+  }
+
+  const paletteItems = useMemo<PaletteItem[]>(
+    () => {
+      const items: PaletteItem[] = [
+        {
+          id: 'action-open-script',
+          title: 'Open script…',
+          subtitle: currentProject ? `Open an .smh file in ${currentProject.name}` : 'Choose an .smh file',
+          hint: 'Action',
+          section: 'Actions',
+          symbol: '↗',
+          keywords: ['open', 'script', 'smh'],
+          onSelect: async () => {
+            await handleOpenScript()
+          }
+        },
+        {
+          id: 'action-projects',
+          title: currentProject ? 'Exit project' : 'Project switcher',
+          subtitle: currentProject ? `Leave ${currentProject.name} and go back to the project list` : 'Go back to the project list',
+          hint: 'Action',
+          section: 'Actions',
+          symbol: '⌘',
+          keywords: ['projects', 'switcher', 'exit', 'leave', 'close project'],
+          onSelect: async () => {
+            await handleExitProject()
+          }
+        },
+        {
+          id: 'action-import-projects',
+          title: 'Import projects…',
+          subtitle: 'Scan a parent folder for git repositories',
+          hint: 'Action',
+          section: 'Actions',
+          symbol: '⊕',
+          keywords: ['import', 'git', 'repositories'],
+          onSelect: async () => {
+            await handleImportProjects()
+          }
+        },
+        {
+          id: 'dev-toggle-mode',
+          title: devMode ? 'Disable dev mode' : 'Enable dev mode',
+          subtitle: devMode ? 'Hide element tags and dev helpers' : 'Show element tags and debugging helpers',
+          hint: 'Dev',
+          section: 'Dev',
+          symbol: '</>',
+          keywords: ['dev', 'debug', 'labels', 'inspect', 'overlay'],
+          onSelect: async () => {
+            await handleToggleDevMode()
+          }
+        }
+      ]
+
+      if (devMode) {
+        items.push(
+          {
+            id: 'dev-toggle-outlines',
+            title: devOutlines ? 'Hide dev outlines' : 'Show dev outlines',
+            subtitle: 'Toggle region borders around labeled elements',
+            hint: 'Dev',
+            section: 'Dev',
+            symbol: '□',
+            keywords: ['dev', 'outlines', 'boxes', 'regions'],
+            onSelect: () => {
+              handleToggleDevOutlines()
+            }
+          },
+          {
+            id: 'dev-copy-summary',
+            title: 'Copy dev summary',
+            subtitle: 'Copy current project, script, playback, and last-clicked state',
+            hint: 'Dev',
+            section: 'Dev',
+            symbol: '⧉',
+            keywords: ['dev', 'summary', 'copy', 'debug'],
+            onSelect: async () => {
+              await handleCopyDevSummary()
+            }
+          },
+          {
+            id: 'dev-copy-last-label',
+            title: 'Copy last clicked label',
+            subtitle: devLastClicked || 'Click a tagged element first',
+            hint: 'Dev',
+            section: 'Dev',
+            symbol: '#',
+            keywords: ['dev', 'label', 'copy', 'last clicked'],
+            onSelect: async () => {
+              await handleCopyLastDevLabel()
+            }
+          }
+        )
+      }
+
+      if (currentProject) {
+        items.push({
+          id: 'workspace-clear-script',
+          title: 'Clear current script',
+          subtitle: scriptPath ? `Remove ${basename(scriptPath)} and stay in ${currentProject.name}` : `Start fresh in ${currentProject.name}`,
+          hint: 'Workspace',
+          section: 'Workspace',
+          symbol: '⌫',
+          keywords: ['clear', 'reset', 'blank', 'new script', 'close script'],
+          onSelect: () => {
+            handleClearCurrentScript()
+          }
+        })
+
+        items.push({
+          id: 'workspace-validate',
+          title: 'Validate script',
+          subtitle: 'Run checks against the current project',
+          hint: 'Workspace',
+          section: 'Workspace',
+          symbol: '✓',
+          keywords: ['validate', 'check', 'lint', 'verify'],
+          onSelect: async () => {
+            await handleValidate()
+          }
+        })
+
+        items.push({
+          id: 'workspace-copy-path',
+          title: 'Copy file path…',
+          subtitle: 'Pick a project file and copy its relative path',
+          hint: 'Workspace',
+          section: 'Workspace',
+          symbol: '⧉',
+          keywords: ['copy', 'path', 'file', 'relative'],
+          onSelect: async () => {
+            await pickFilePath()
+          }
+        })
+
+        if (script.trim() || scriptPath || actions.length > 0) {
+          items.push({
+            id: status === 'paused' ? 'playback-resume' : status === 'playing' ? 'playback-restart' : 'playback-play',
+            title: status === 'paused' ? 'Resume playback' : status === 'playing' ? 'Restart playback' : 'Play script',
+            subtitle:
+              status === 'paused'
+                ? 'Continue the current walkthrough'
+                : status === 'playing'
+                  ? 'Restart from the top'
+                  : 'Validate and run the current script',
+            hint: 'Playback',
+            section: 'Playback',
+            symbol: status === 'paused' ? '▶' : status === 'playing' ? '↺' : '▶',
+            keywords: ['play', 'run', 'resume', 'restart', 'presentation'],
+            onSelect: async () => {
+              if (status === 'paused') {
+                handleResume()
+                return
+              }
+              if (status === 'playing') {
+                await handleRestart()
+                return
+              }
+              await handleRun()
+            }
+          })
+
+          items.push({
+            id: status === 'playing' || status === 'paused' ? 'playback-skip' : 'playback-step',
+            title: status === 'playing' || status === 'paused' ? 'Skip step' : 'Step once',
+            subtitle:
+              status === 'playing' || status === 'paused'
+                ? 'Skip the current narration or pause block'
+                : 'Run the next step only',
+            hint: 'Playback',
+            section: 'Playback',
+            symbol: '▹',
+            keywords: ['skip', 'step', 'next', 'advance'],
+            onSelect: async () => {
+              await handleSkipForward()
+            }
+          })
+        }
+
+        if (status === 'playing') {
+          items.push({
+            id: 'playback-pause',
+            title: 'Pause playback',
+            subtitle: 'Pause the current walkthrough',
+            hint: 'Playback',
+            section: 'Playback',
+            symbol: '❚❚',
+            keywords: ['pause', 'hold'],
+            onSelect: () => {
+              pause()
+            }
+          })
+        }
+
+        if (hasPresentation) {
+          items.push({
+            id: 'playback-close',
+            title: 'Close presentation view',
+            subtitle: 'Stop playback and return to the editor',
+            hint: 'Playback',
+            section: 'Playback',
+            symbol: '×',
+            keywords: ['close', 'stop', 'editor'],
+            onSelect: () => {
+              handleClosePresentation()
+            }
+          })
+        }
+      }
+
+      items.push(
+        ...recentPresentationPaths.map((entry) => {
+          const rememberedProject = entry.projectId != null ? projects.find((project) => project.id === entry.projectId) || null : null
+
+          return {
+            id: `recent-${entry.path}`,
+            title: basename(entry.path),
+            subtitle: rememberedProject ? `${rememberedProject.name} · ${parentPath(entry.path)}` : parentPath(entry.path),
+            hint: rememberedProject ? 'Recent' : 'Recent',
+            section: 'Recent scripts',
+            symbol: rememberedProject ? '↺' : '.smh',
+            keywords: [entry.path, basename(entry.path), rememberedProject?.name || '', 'recent', 'smh'],
+            onSelect: async () => {
+              setPresentationMode(false)
+              await openRecentPresentation(entry)
+            }
+          }
+        })
+      )
+
+      items.push(
+        ...projects.map((project) => ({
+          id: `project-${project.id}`,
+          title: project.name,
+          subtitle: project.gitRemoteSlug || project.rootPath,
+          hint: 'Project',
+          section: 'Projects',
+          symbol: project.gitRemoteSlug ? 'git' : 'dir',
+          keywords: [project.rootPath, project.gitRemoteSlug || '', project.name],
+          onSelect: async () => {
+            setPresentationMode(false)
+            await chooseProject(project.id)
+          }
+        }))
+      )
+
+      return items
+    },
+    [
+      actions.length,
+      chooseProject,
+      currentAction,
+      currentProject,
+      devLastClicked,
+      devMode,
+      devOutlines,
+      diagnostics.length,
+      hasPresentation,
+      openRecentPresentation,
+      orderedPanels.length,
+      pause,
+      projects,
+      recentPresentationPaths,
+      script,
+      scriptPath,
+      status
+    ]
+  )
 
   async function pickFilePath() {
     const filePath = await window.smh.pickFile(currentProject?.rootPath ?? null)
@@ -172,12 +636,21 @@ export default function App() {
 
     try {
       await navigator.clipboard.writeText(displayPath)
-      setFileMessage(`Copied path: ${displayPath}`)
+      flashMessage(setFileMessage, `Copied path: ${displayPath}`)
     } catch {
-      setFileMessage(`Selected path: ${displayPath}`)
+      flashMessage(setFileMessage, `Selected path: ${displayPath}`)
     }
+  }
 
-    window.setTimeout(() => setFileMessage(''), 4000)
+  async function handleOpenScript() {
+    const openedPath = await openScript()
+    if (!openedPath) return
+    flashMessage(setFileMessage, `Opened script: ${relativePath(openedPath, currentProject?.rootPath)}`)
+  }
+
+  async function handleValidate() {
+    const valid = await validate()
+    flashMessage(setFileMessage, valid ? 'Check passed.' : 'Check found issues.')
   }
 
   async function handleRun() {
@@ -190,9 +663,9 @@ export default function App() {
     await restart()
   }
 
-  async function handleNextStep() {
+  async function handleSkipForward() {
     setPresentationMode(true)
-    await nextStep()
+    await skipForward()
   }
 
   function handleClosePresentation() {
@@ -205,81 +678,120 @@ export default function App() {
     resume()
   }
 
+  function renderDevHud() {
+    if (!devMode) {
+      return null
+    }
+
+    return (
+      <div className="pointer-events-none fixed bottom-3 right-3 z-[71] w-[300px] rounded-md border border-[#4b6256] bg-[#1a201c]/95 p-3 text-[11px] text-[#d9e3dc] shadow-lg shadow-black/25" data-dev-label="dev.hud">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <span className="font-medium text-[#eef1f4]">Dev mode</span>
+          <span className="text-[#9fb2a7]">{devOutlines ? 'labels + outlines' : 'labels only'}</span>
+        </div>
+        <div className="space-y-1 text-[#b8c6be]">
+          <div>Project: {currentProject?.name || 'none'}</div>
+          <div>Script: {scriptPath ? basename(scriptPath) : script.trim() ? 'unsaved' : 'none'}</div>
+          <div>Status: {status}</div>
+          <div>Action: {currentAction ? `${currentAction.sourceLine} · ${currentAction.summary}` : 'none'}</div>
+          <div>Last: {devLastClicked || 'click a tagged element'}</div>
+        </div>
+      </div>
+    )
+  }
+
   if (!bootstrapped) {
-    return <div className="flex h-full items-center justify-center bg-zinc-950 text-zinc-400">Loading ShowMeHow...</div>
+    return <div className={`${appFrameClass} items-center justify-center text-sm ${mutedTextClass}`}>Loading ShowMeHow…</div>
   }
 
   if (projectSelectorOpen) {
     return (
-      <ProjectSelector
-        projects={projects}
-        currentProjectId={currentProjectId}
-        pendingScriptPath={pendingScriptPath}
-        canClose={Boolean(currentProject) && !pendingScriptPath}
-        onClose={closeProjectSelector}
-        onSelect={chooseProject}
-        onCreate={createProject}
-        onUpdate={updateProject}
-        onDelete={deleteProject}
-      />
+      <>
+        <ProjectSelector
+          projects={projects}
+          pendingScriptPath={pendingScriptPath}
+          onSelect={chooseProject}
+          onCreate={createProject}
+          onImportFromParent={importProjectsFromParent}
+          onUpdate={updateProject}
+          onDelete={deleteProject}
+        />
+        <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+        <DevModeOverlay enabled={devMode} showOutlines={devOutlines} />
+        {renderDevHud()}
+      </>
     )
   }
 
   return (
-    <div className="flex h-full flex-col bg-zinc-950 text-zinc-100">
+    <div className={appFrameClass} data-dev-label="app.shell">
       {hasPresentation ? (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <header className="border-b border-zinc-800 px-4 py-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="min-w-[260px] flex-1">
-                <div className="text-base font-semibold text-white">{meta.title || 'Presentation'}</div>
-                <div className="mt-1 text-sm text-zinc-400">
-                  {currentProject?.name || 'No project selected'} · {status}
-                  {currentAction ? ` · line ${currentAction.sourceLine} · ${currentAction.summary}` : ''}
+        <div className="flex min-h-0 flex-1 flex-col" data-dev-label="presentation.shell">
+          <header className="border-b border-[#34383e] bg-[#202327] px-4 py-2.5" data-dev-label="presentation.header">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h1 className="truncate text-sm font-medium text-[#f4f6f8]">{meta.title || 'Presentation'}</h1>
+                  <span className={badgeClass(playbackTone)}>{status}</span>
+                </div>
+                <div className={`truncate text-[11px] ${mutedTextClass}`}>
+                  {currentProject?.name || 'No project selected'}
+                  {currentAction ? ` · ${currentAction.sourceLine} · ${currentAction.summary}` : ''}
                 </div>
               </div>
 
-              <button className={buttonClass('ghost')} onClick={handleClosePresentation}>
-                Close presentation
-              </button>
-              {status === 'playing' ? (
-                <button className={buttonClass()} onClick={pause}>
-                  Pause
-                </button>
-              ) : (
-                <button className={buttonClass()} onClick={handleResume} disabled={status !== 'paused'}>
-                  Resume
-                </button>
-              )}
-              <button className={buttonClass()} onClick={() => void handleRestart()}>
-                Restart
-              </button>
-              <button className={buttonClass()} onClick={() => void handleNextStep()}>
-                Next step
-              </button>
+              <div className="flex items-center gap-1.5">
+                <IconButton title="Close" onClick={handleClosePresentation} devLabel="presentation.close">
+                  <CloseIcon />
+                </IconButton>
+                {status === 'playing' ? (
+                  <IconButton title="Pause" onClick={pause} variant="secondary" devLabel="presentation.pause">
+                    <PauseIcon />
+                  </IconButton>
+                ) : (
+                  <IconButton title="Resume" onClick={handleResume} disabled={status !== 'paused'} variant="secondary" devLabel="presentation.resume">
+                    <PlayIcon />
+                  </IconButton>
+                )}
+                <IconButton title="Restart" onClick={() => void handleRestart()} variant="secondary" devLabel="presentation.restart">
+                  <RestartIcon />
+                </IconButton>
+                <IconButton
+                  title={status === 'playing' || status === 'paused' ? 'Skip' : 'Step'}
+                  onClick={() => void handleSkipForward()}
+                  variant="primary"
+                  devLabel="presentation.skip"
+                >
+                  <StepIcon />
+                </IconButton>
+              </div>
             </div>
-
           </header>
 
           <NarrationBar tts={tts} onPause={pause} onResume={handleResume} onVolumeChange={setTtsVolume} />
 
-          <main className="min-h-0 flex-1 p-3">
+          <main className="min-h-0 flex-1 p-3" data-dev-label="presentation.canvas">
             <div
               className={`grid h-full min-h-0 gap-3 ${layoutMode === 'single' ? 'grid-cols-1' : 'grid-cols-2'} ${
                 layoutMode === 'grid' ? 'auto-rows-fr' : ''
               }`}
             >
               {orderedPanels.map((panel) => (
-                <div key={panel.id} className={`flex min-h-0 min-w-0 flex-col ${panel.focused ? 'ring-1 ring-amber-400' : ''}`}>
-                  <div className="flex items-center justify-between rounded-t-md border border-b-0 border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-300">
-                    <span>{panel.filePath ? relativePath(panel.filePath, currentProject?.rootPath) : `${panel.id} · ${panel.type}`}</span>
-                    <span>{panel.focused ? 'focused' : ''}</span>
+                <div
+                  key={panel.id}
+                  className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border ${
+                    panel.focused ? 'border-[#627591]' : 'border-[#34383e]'
+                  } bg-[#202327]`}
+                >
+                  <div className="flex items-center justify-between border-b border-[#34383e] px-3 py-1.5 text-[11px] text-[#c9d0d7]">
+                    <span className="truncate">{panel.filePath ? relativePath(panel.filePath, currentProject?.rootPath) : `${panel.id} · ${panel.type}`}</span>
+                    <span className={panel.focused ? 'text-[#b9c8dc]' : subtleTextClass}>{panel.focused ? 'Focused' : panel.type}</span>
                   </div>
                   <div className="min-h-0 flex-1">
                     {panel.type === 'code' ? (
                       <CodePanel panel={panel} />
                     ) : (
-                      <div className="flex h-full items-center justify-center border border-zinc-800 bg-zinc-950 text-sm text-zinc-500">
+                      <div className="flex h-full items-center justify-center text-sm text-[#8b929c]">
                         Browser panels are disabled in this prototype.
                       </div>
                     )}
@@ -288,7 +800,7 @@ export default function App() {
               ))}
 
               {orderedPanels.length === 0 ? (
-                <div className="flex min-h-0 items-center justify-center rounded-md border border-dashed border-zinc-800 text-sm text-zinc-500">
+                <div className="flex min-h-0 items-center justify-center rounded-md border border-dashed border-[#34383e] bg-[#202327] text-sm text-[#8b929c]">
                   Run a script to open code panels.
                 </div>
               ) : null}
@@ -296,92 +808,98 @@ export default function App() {
           </main>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col">
-          <header className="border-b border-zinc-800 px-4 py-4">
-            <div className="flex flex-wrap items-start gap-4">
+        <div className="flex min-h-0 flex-1 flex-col" data-dev-label="workspace.shell">
+          <header className="border-b border-[#34383e] bg-[#202327] px-4 py-2.5" data-dev-label="workspace.header">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-[280px] flex-1">
-                <div className="text-lg font-semibold text-white">{meta.title || 'ShowMeHow'}</div>
-                <div className="mt-1 text-sm text-zinc-400">
+                <h1 className="text-sm font-medium text-[#f4f6f8]">{meta.title || 'ShowMeHow'}</h1>
+                <div className={`mt-0.5 text-[11px] ${mutedTextClass}`}>
                   {currentProject ? `${currentProject.name} · ${currentProject.rootPath}` : 'No project selected'}
                 </div>
-                <div className="mt-2 text-xs text-zinc-500">
-                  {scriptPath ? `Script: ${relativePath(scriptPath, currentProject?.rootPath)}` : 'Script: unsaved / sample'}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {scriptDisplay ? <span className={badgeClass()}>{scriptDisplay}</span> : null}
+                  <span className={badgeClass()}>{actions.length} actions</span>
+                  <span className={badgeClass(issueTone)}>{diagnostics.length} issues</span>
+                  <span className={badgeClass(playbackTone)}>{status}</span>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button className={buttonClass('ghost')} onClick={openProjectSelector}>
-                  Projects
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  className={buttonClass('ghost', 'sm')}
+                  onClick={() => void openProjectSelector()}
+                  data-dev-label="workspace.projects"
+                  title="Leave this project and go back to the project list"
+                >
+                  Switch project
                 </button>
-                <button className={buttonClass('ghost')} onClick={loadSample}>
-                  Load sample
+                <button
+                  className={buttonClass('secondary', 'sm')}
+                  onClick={() => void handleOpenScript()}
+                  data-dev-label="workspace.open-script"
+                  title="Open an .smh walkthrough script"
+                >
+                  Open script…
                 </button>
-                <button className={buttonClass('ghost')} onClick={() => void pickFilePath()}>
-                  Copy file path
+                <button
+                  className={buttonClass('ghost', 'sm')}
+                  onClick={() => void pickFilePath()}
+                  data-dev-label="workspace.copy-path"
+                  title="Pick a project file and copy its relative path"
+                >
+                  Copy path…
                 </button>
-                <button className={buttonClass()} onClick={() => void validate()}>
+                <button
+                  className={buttonClass('secondary', 'sm')}
+                  onClick={() => void handleValidate()}
+                  data-dev-label="workspace.validate"
+                  title="Validate the current script against this project"
+                >
                   Validate
                 </button>
-                <button className={buttonClass('primary')} onClick={() => void handleRun()}>
-                  Run script
+                <button
+                  className={buttonClass('primary', 'sm')}
+                  onClick={() => void handleRun()}
+                  data-dev-label="workspace.play"
+                  title="Run the current walkthrough"
+                >
+                  Run walkthrough
                 </button>
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-zinc-300">
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={muteTts} onChange={(event) => setMuteTts(event.target.checked)} />
-                mute narration
-              </label>
-
-              <label className="flex items-center gap-2">
-                <span className="text-zinc-400">timeline speed</span>
-                <select
-                  className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm"
-                  value={speedMultiplier}
-                  onChange={(event) => setSpeedMultiplier(Number(event.target.value))}
-                >
-                  {speedOptions.map((speed) => (
-                    <option key={speed} value={speed}>
-                      {speed}x
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="text-sm text-zinc-500">
-                status: {status} · actions: {actions.length} · issues: {diagnostics.length}
-              </div>
-            </div>
           </header>
 
-          {fileMessage ? <div className="border-b border-zinc-800 px-4 py-2 text-xs text-amber-300">{fileMessage}</div> : null}
+          {fileMessage ? (
+            <div className="border-b border-[#5a4637] bg-[#232933] px-4 py-1.5 text-[11px] text-[#d5dfed]">{fileMessage}</div>
+          ) : null}
 
           <main className="flex min-h-0 flex-1 flex-col">
-            <div className="min-h-0 flex-1 p-4">
-              <textarea
-                className="h-full w-full resize-none rounded-md border border-zinc-800 bg-zinc-950 p-4 font-mono text-[13px] leading-6 text-zinc-100 outline-none"
-                value={script}
-                onChange={(event) => setScript(event.target.value)}
-                spellCheck={false}
-              />
+            <div className="min-h-0 flex-1 p-3" data-dev-label="workspace.editor-region">
+              <div className={`${raisedSurfaceClass} flex h-full min-h-0 flex-col overflow-hidden`} data-dev-label="workspace.script-editor">
+                <div className="flex items-center justify-between border-b border-[#34383e] px-3 py-1.5 text-[11px] text-[#c9d0d7]">
+                  <span className="font-medium text-[#eef1f4]">Script</span>
+                  {scriptDisplay ? <span className={subtleTextClass}>{scriptDisplay}</span> : null}
+                </div>
+                <ScriptEditor value={script} path={scriptPath} diagnostics={diagnostics} onChange={setScript} />
+              </div>
             </div>
 
-            <div className="border-t border-zinc-800 px-4 py-3">
-              <div className="grid gap-3 lg:grid-cols-3">
-                <details className="rounded-md border border-zinc-800 bg-zinc-900/50 p-3" open={diagnostics.length > 0}>
-                  <summary className="cursor-pointer text-sm font-medium text-white">Diagnostics ({diagnostics.length})</summary>
-                  <div className="mt-3 max-h-56 overflow-auto text-xs">
+            <div className="border-t border-[#34383e] px-3 py-2.5">
+              <div className="grid gap-2.5 lg:grid-cols-3">
+                <details className={`${surfaceClass} p-2.5`} open={diagnostics.length > 0} data-dev-label="workspace.diagnostics">
+                  <summary className="cursor-pointer text-xs font-medium text-[#f4f6f8]">Diagnostics ({diagnostics.length})</summary>
+                  <div className="mt-2.5 max-h-56 overflow-auto text-[11px]">
                     {diagnostics.length === 0 ? (
-                      <div className="text-zinc-500">No diagnostics.</div>
+                      <div className={subtleTextClass}>No diagnostics.</div>
                     ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-2">
                         {diagnostics.map((diagnostic, index) => (
-                          <div key={`${diagnostic.code}-${index}`} className="rounded border border-zinc-800 bg-zinc-950/80 p-2">
-                            <div className={diagnostic.severity === 'error' ? 'text-red-300' : 'text-amber-300'}>
+                          <div key={`${diagnostic.code}-${index}`} className="rounded-md border border-[#34383e] bg-[#1b1e22] p-2">
+                            <div className={diagnostic.severity === 'error' ? 'text-[#e8c3c3]' : 'text-[#d5dfed]'}>
                               {diagnostic.severity.toUpperCase()} · line {diagnostic.line}
                             </div>
-                            <div className="mt-1 text-zinc-200">{diagnostic.message}</div>
+                            <div className="mt-1 text-[#eef1f4]">{diagnostic.message}</div>
                           </div>
                         ))}
                       </div>
@@ -389,11 +907,11 @@ export default function App() {
                   </div>
                 </details>
 
-                <details className="rounded-md border border-zinc-800 bg-zinc-900/50 p-3">
-                  <summary className="cursor-pointer text-sm font-medium text-white">Timeline ({actions.length})</summary>
-                  <div className="mt-3 max-h-56 overflow-auto text-xs">
+                <details className={`${surfaceClass} p-2.5`} data-dev-label="workspace.timeline">
+                  <summary className="cursor-pointer text-xs font-medium text-[#f4f6f8]">Timeline ({actions.length})</summary>
+                  <div className="mt-2.5 max-h-56 overflow-auto text-[11px]">
                     {actions.length === 0 ? (
-                      <div className="text-zinc-500">No actions yet.</div>
+                      <div className={subtleTextClass}>No actions yet.</div>
                     ) : (
                       <div className="space-y-2">
                         {actions.map((action, index) => {
@@ -402,17 +920,17 @@ export default function App() {
                           return (
                             <div
                               key={action.id}
-                              className={`rounded border p-2 ${
-                                active ? 'border-amber-500/60 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/80'
+                              className={`rounded-md border p-2 ${
+                                active ? 'border-[#627591] bg-[#232933]' : 'border-[#34383e] bg-[#1b1e22]'
                               }`}
                             >
-                              <div className="flex items-center justify-between gap-3 text-zinc-400">
+                              <div className={`flex items-center justify-between gap-3 ${mutedTextClass}`}>
                                 <span>
                                   {index + 1}. line {action.sourceLine}
                                 </span>
                                 <span>{rowStatus}</span>
                               </div>
-                              <div className="mt-1 text-zinc-200">{action.summary}</div>
+                              <div className="mt-1 text-[#eef1f4]">{action.summary}</div>
                             </div>
                           )
                         })}
@@ -421,30 +939,30 @@ export default function App() {
                   </div>
                 </details>
 
-                <details className="rounded-md border border-zinc-800 bg-zinc-900/50 p-3">
-                  <summary className="cursor-pointer text-sm font-medium text-white">Recent logs ({logs.length})</summary>
-                  <div className="mt-3 max-h-56 overflow-auto text-xs">
+                <details className={`${surfaceClass} p-2.5`} data-dev-label="workspace.logs">
+                  <summary className="cursor-pointer text-xs font-medium text-[#f4f6f8]">Logs ({logs.length})</summary>
+                  <div className="mt-2.5 max-h-56 overflow-auto text-[11px]">
                     {recentLogs.length === 0 ? (
-                      <div className="text-zinc-500">No logs yet.</div>
+                      <div className={subtleTextClass}>No logs yet.</div>
                     ) : (
                       <div className="space-y-2">
                         {recentLogs.map((log, index) => (
-                          <div key={`${log.timestamp}-${index}`} className="rounded border border-zinc-800 bg-zinc-950/80 p-2">
+                          <div key={`${log.timestamp}-${index}`} className="rounded-md border border-[#34383e] bg-[#1b1e22] p-2">
                             <div className="flex items-center justify-between gap-3">
                               <span
                                 className={
                                   log.level === 'error'
-                                    ? 'text-red-300'
+                                    ? 'text-[#e8c3c3]'
                                     : log.level === 'warn'
-                                      ? 'text-amber-300'
-                                      : 'text-zinc-400'
+                                      ? 'text-[#d5dfed]'
+                                      : mutedTextClass
                                 }
                               >
                                 {log.level}
                               </span>
-                              <span className="text-zinc-600">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                              <span className={subtleTextClass}>{new Date(log.timestamp).toLocaleTimeString()}</span>
                             </div>
-                            <div className="mt-1 text-zinc-200">{log.message}</div>
+                            <div className="mt-1 text-[#eef1f4]">{log.message}</div>
                           </div>
                         ))}
                       </div>
@@ -456,6 +974,9 @@ export default function App() {
           </main>
         </div>
       )}
+      <CommandPalette open={paletteOpen} items={paletteItems} onClose={() => setPaletteOpen(false)} />
+      <DevModeOverlay enabled={devMode} showOutlines={devOutlines} />
+      {renderDevHud()}
     </div>
   )
 }

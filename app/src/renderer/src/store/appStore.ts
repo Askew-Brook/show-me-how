@@ -1,8 +1,7 @@
 import { create, type StoreApi } from 'zustand'
-import type { ProjectBootState, ProjectInput, ProjectRecord } from '../lib/projects'
+import type { ProjectBootState, ProjectImportResult, ProjectInput, ProjectRecord, RecentPresentationEntry } from '../lib/projects'
 import {
   type ActionStatus,
-  createSampleScript,
   type Diagnostic,
   type LayoutMode,
   type ParsedAction,
@@ -70,7 +69,7 @@ interface AppState {
   layoutMode: LayoutMode
   logs: RuntimeLogEntry[]
   muteTts: boolean
-  speedMultiplier: number
+  recentPresentationPaths: RecentPresentationEntry[]
   tts: TtsPlaybackState
   config: AppConfig
   projects: ProjectRecord[]
@@ -78,14 +77,16 @@ interface AppState {
   projectSelectorOpen: boolean
   bootstrap: () => Promise<void>
   setScript: (script: string) => void
-  loadSample: () => void
+  openScript: () => Promise<string | null>
+  openRecentPresentation: (entry: RecentPresentationEntry) => Promise<void>
+  clearCurrentScript: () => void
   setMuteTts: (mute: boolean) => void
-  setSpeedMultiplier: (speed: number) => void
   setTtsVolume: (volume: number) => void
   setTtsRateMultiplier: (rateMultiplier: number) => void
-  openProjectSelector: () => void
+  openProjectSelector: () => Promise<void>
   closeProjectSelector: () => void
-  createProject: (input: ProjectInput) => Promise<void>
+  createProject: (input: ProjectInput) => Promise<ProjectRecord>
+  importProjectsFromParent: (parentPath: string) => Promise<ProjectImportResult>
   updateProject: (projectId: number, input: ProjectInput) => Promise<void>
   deleteProject: (projectId: number) => Promise<void>
   chooseProject: (projectId: number) => Promise<void>
@@ -96,6 +97,7 @@ interface AppState {
   restart: () => Promise<void>
   stop: () => void
   nextStep: () => Promise<void>
+  skipForward: () => Promise<void>
 }
 
 type StoreSet = StoreApi<AppState>['setState']
@@ -120,6 +122,10 @@ function createDefaultTtsState(previous?: TtsPlaybackState): TtsPlaybackState {
 
 let activeRunId = 0
 let activeTtsSession: { runId: number; stop: () => void } | null = null
+let activeSkippableAction: { runId: number; actionId: string; skip: () => void } | null = null
+let pendingSkipCount = 0
+const TTS_TRAILING_SILENCE_MS = 180
+const TTS_END_GRACE_MS = 120
 
 class RunAbortedError extends Error {
   constructor() {
@@ -127,9 +133,15 @@ class RunAbortedError extends Error {
   }
 }
 
+class SkipActionError extends Error {
+  constructor(actionId?: string) {
+    super(actionId ? `Skipped action: ${actionId}` : 'Skipped action')
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   bootstrapped: false,
-  script: createSampleScript(),
+  script: '',
   scriptPath: null,
   pendingScriptPath: null,
   meta: {},
@@ -143,7 +155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   layoutMode: 'two-column',
   logs: [],
   muteTts: false,
-  speedMultiplier: 1,
+  recentPresentationPaths: [],
   tts: createDefaultTtsState(),
   config: defaultConfig,
   projects: [],
@@ -151,17 +163,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   projectSelectorOpen: true,
 
   bootstrap: async () => {
-    const [config, bootState] = await Promise.all([window.smh.getConfig(), window.smh.getBootState()])
-    const currentProject = bootState.projects.find((project) => project.id === bootState.currentProjectId) || null
-    const initialScript = await getInitialScriptForBoot(bootState, currentProject)
+    const [config, recentPresentationPaths, normalizedBootState] = await Promise.all([
+      window.smh.getConfig(),
+      window.smh.getRecentPresentationPaths(),
+      window.smh.clearCurrentProject()
+    ])
+    const currentProject = normalizedBootState.projects.find((project) => project.id === normalizedBootState.currentProjectId) || null
+    const initialScript = await getInitialScriptForBoot(normalizedBootState, currentProject)
 
     set({
       bootstrapped: true,
       config,
-      projects: bootState.projects,
-      currentProjectId: bootState.currentProjectId,
-      pendingScriptPath: bootState.pendingScriptPath,
-      projectSelectorOpen: bootState.currentProjectId === null || (Boolean(bootState.pendingScriptPath) && !currentProject),
+      projects: normalizedBootState.projects,
+      currentProjectId: normalizedBootState.currentProjectId,
+      pendingScriptPath: normalizedBootState.pendingScriptPath,
+      projectSelectorOpen: true,
+      recentPresentationPaths,
       script: initialScript.content,
       scriptPath: initialScript.path
     })
@@ -172,34 +189,49 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     window.addEventListener('beforeunload', () => unsubscribe(), { once: true })
 
-    if (currentProject && bootState.pendingScriptPath) {
-      await window.smh.clearPendingScript()
-      set({ pendingScriptPath: null, projectSelectorOpen: false })
-      const valid = await get().validate()
-      if (valid) {
-        await get().play()
-      }
-      return
-    }
-
-    if (currentProject && !bootState.pendingScriptPath) {
-      await get().validate()
-    }
   },
 
   setScript: (script) => {
     set({ script, scriptPath: null })
   },
 
-  loadSample: () => {
-    set({
-      script: createSampleScript(currentProjectFor(get)),
-      scriptPath: null
-    })
+  openScript: async () => {
+    const project = currentProjectFor(get)
+    const filePath = await window.smh.pickPresentationFile(project?.rootPath ?? null)
+    if (!filePath) {
+      return null
+    }
+
+    await openPresentationScript(filePath, set, get, { openSelector: !project, autoPlay: false })
+    return filePath
+  },
+
+  openRecentPresentation: async (entry) => {
+    await openRecentPresentationEntry(entry, set, get)
+  },
+
+  clearCurrentScript: () => {
+    abortActiveRun(set, get)
+    set((state: AppState) => ({
+      script: '',
+      scriptPath: null,
+      pendingScriptPath: null,
+      projectSelectorOpen: state.currentProjectId == null,
+      meta: {},
+      actions: [],
+      diagnostics: [],
+      status: 'idle',
+      currentActionIndex: 0,
+      actionStatuses: {},
+      panels: {},
+      panelOrder: [],
+      logs: [],
+      layoutMode: 'two-column',
+      tts: createDefaultTtsState(state.tts)
+    }))
   },
 
   setMuteTts: (muteTts) => set({ muteTts }),
-  setSpeedMultiplier: (speedMultiplier) => set({ speedMultiplier }),
   setTtsVolume: (volume) =>
     set((state: AppState) => ({
       tts: {
@@ -215,8 +247,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     })),
 
-  openProjectSelector: () => {
-    set({ projectSelectorOpen: true })
+  openProjectSelector: async () => {
+    abortActiveRun(set, get)
+    await window.smh.clearCurrentProject()
+    set({
+      currentProjectId: null,
+      projectSelectorOpen: true,
+      status: 'idle',
+      panels: {},
+      panelOrder: [],
+      actionStatuses: {},
+      currentActionIndex: 0,
+      tts: createDefaultTtsState(get().tts)
+    })
   },
 
   closeProjectSelector: () => {
@@ -231,6 +274,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((state: AppState) => ({
       projects: [...state.projects, project].sort(compareProjects)
     }))
+
+    return project
+  },
+
+  importProjectsFromParent: async (parentPath) => {
+    const result = await window.smh.importProjectsFromParent(parentPath)
+
+    set((state: AppState) => ({
+      projects: result.projects.sort(compareProjects),
+      currentProjectId:
+        state.currentProjectId != null && result.projects.some((project) => project.id === state.currentProjectId)
+          ? state.currentProjectId
+          : state.currentProjectId
+    }))
+
+    return result
   },
 
   updateProject: async (projectId, input) => {
@@ -241,23 +300,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
 
     if (get().currentProjectId === projectId && !get().pendingScriptPath) {
-      const loaded = await loadDefaultOrSampleScript(updatedProject)
-      set({ script: loaded.content, scriptPath: loaded.path })
       await get().validate()
     }
   },
 
   deleteProject: async (projectId) => {
     const bootState: ProjectBootState = await window.smh.deleteProject(projectId)
-    const currentProject = bootState.projects.find((project) => project.id === bootState.currentProjectId) || null
-    const loaded = await getInitialScriptForBoot(bootState, currentProject)
+    const loaded = await getInitialScriptForBoot(bootState, null)
 
     activeRunId += 1
     set({
       projects: bootState.projects,
       currentProjectId: bootState.currentProjectId,
       pendingScriptPath: bootState.pendingScriptPath,
-      projectSelectorOpen: bootState.currentProjectId === null || Boolean(bootState.pendingScriptPath),
+      projectSelectorOpen: true,
       script: loaded.content,
       scriptPath: loaded.path,
       meta: {},
@@ -272,18 +328,41 @@ export const useAppStore = create<AppState>((set, get) => ({
       layoutMode: 'two-column',
       tts: createDefaultTtsState(get().tts)
     })
-
-    if (currentProject && !bootState.pendingScriptPath) {
-      await get().validate()
-    }
   },
 
   chooseProject: async (projectId) => {
-    const project = await window.smh.setCurrentProject(projectId)
+    const selectedProject = get().projects.find((project) => project.id === projectId)
+    if (!selectedProject) {
+      throw new Error('Project not found')
+    }
+
     activeRunId += 1
 
     const pendingScriptPath = get().pendingScriptPath
-    const scriptToLoad = pendingScriptPath ? await loadExternalScript(pendingScriptPath) : await loadDefaultOrSampleScript(project)
+    const scriptToLoad = pendingScriptPath ? await loadExternalScript(pendingScriptPath) : null
+
+    if (pendingScriptPath) {
+      const validation = await validateScriptAgainstProject(scriptToLoad?.content ?? get().script, selectedProject)
+
+      set({
+        meta: validation.meta,
+        actions: validation.actions,
+        diagnostics: validation.diagnostics,
+        actionStatuses: validation.actionStatuses,
+        layoutMode: validation.meta.startLayout || 'two-column'
+      })
+
+      if (validation.hasErrors) {
+        window.alert(buildValidationFailureAlert(pendingScriptPath, selectedProject, validation.diagnostics))
+        return
+      }
+    }
+
+    const project = await window.smh.setCurrentProject(projectId)
+
+    const recentPresentationPaths = pendingScriptPath
+      ? await window.smh.rememberRecentPresentationPath(scriptToLoad?.path ?? pendingScriptPath, project.id)
+      : get().recentPresentationPaths
 
     if (pendingScriptPath) {
       await window.smh.clearPendingScript()
@@ -293,8 +372,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentProjectId: project.id,
       pendingScriptPath: null,
       projectSelectorOpen: false,
-      script: scriptToLoad.content,
-      scriptPath: scriptToLoad.path,
+      recentPresentationPaths,
+      script: scriptToLoad?.content ?? state.script,
+      scriptPath: scriptToLoad?.path ?? state.scriptPath,
       meta: {},
       actions: [],
       diagnostics: [],
@@ -316,20 +396,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   validate: async () => {
-    const result = parseDocument(get().script)
-    const diagnostics = await validateDocument(result, currentProjectFor(get))
-    const actionStatuses = Object.fromEntries(result.actions.map((action) => [action.id, 'pending' as ActionStatus]))
+    const validation = await validateScriptAgainstProject(get().script, currentProjectFor(get))
 
     set({
-      meta: result.meta,
-      actions: result.actions,
-      diagnostics,
-      actionStatuses,
-      layoutMode: result.meta.startLayout || get().layoutMode
+      meta: validation.meta,
+      actions: validation.actions,
+      diagnostics: validation.diagnostics,
+      actionStatuses: validation.actionStatuses,
+      layoutMode: validation.meta.startLayout || get().layoutMode
     })
 
-    const hasErrors = diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-    return !hasErrors
+    return !validation.hasErrors
   },
 
   play: async () => {
@@ -351,6 +428,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       resetRuntime(set, get)
     }
 
+    await rememberCurrentScriptProject(get, set)
     await runFromCurrentIndex(set, get)
   },
 
@@ -385,6 +463,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     resetRuntime(set, get)
+    await rememberCurrentScriptProject(get, set)
     await runFromCurrentIndex(set, get)
   },
 
@@ -410,9 +489,21 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
 
+    await rememberCurrentScriptProject(get, set)
+
     const action = actions[currentActionIndex]
     const runId = ++activeRunId
     try {
+      if (consumeSkipRequest()) {
+        setActionStatus(set, action.id, 'skipped')
+        const nextIndex = currentActionIndex + 1
+        set({
+          currentActionIndex: nextIndex,
+          status: nextIndex >= actions.length ? 'completed' : 'idle'
+        })
+        return
+      }
+
       setActionStatus(set, action.id, 'running')
       await executeAction(action, set, get, runId)
       if (runId !== activeRunId) {
@@ -425,18 +516,45 @@ export const useAppStore = create<AppState>((set, get) => ({
         status: nextIndex >= actions.length ? 'completed' : 'idle'
       })
     } catch (error) {
+      if (error instanceof SkipActionError) {
+        consumeSkipRequest()
+        setActionStatus(set, action.id, 'skipped')
+        const nextIndex = currentActionIndex + 1
+        set({
+          currentActionIndex: nextIndex,
+          status: nextIndex >= actions.length ? 'completed' : 'idle'
+        })
+        return
+      }
+
       setActionStatus(set, action.id, 'failed')
       set({ status: 'error' })
       pushLog(set, 'error', error instanceof Error ? error.message : 'Step failed', action.id)
     }
+  },
+
+  skipForward: async () => {
+    if (!ensureProjectSelected(set, get)) return
+
+    const status = get().status
+    if (status === 'completed' || status === 'error') {
+      return
+    }
+
+    if (status === 'playing' || status === 'paused') {
+      pendingSkipCount += 1
+      activeSkippableAction?.skip()
+      return
+    }
+
+    await get().nextStep()
   }
 }))
 
 function normalizeProjectInput(input: ProjectInput) {
   return {
     name: input.name,
-    rootPath: input.rootPath,
-    defaultScriptPath: input.defaultScriptPath.trim() || null
+    rootPath: input.rootPath
   }
 }
 
@@ -444,76 +562,108 @@ function compareProjects(a: ProjectRecord, b: ProjectRecord) {
   return a.name.localeCompare(b.name)
 }
 
+async function validateScriptAgainstProject(script: string, project?: ProjectRecord | null) {
+  const result = parseDocument(script)
+  const diagnostics = await validateDocument(result, project)
+  const actionStatuses = Object.fromEntries(result.actions.map((action) => [action.id, 'pending' as ActionStatus]))
+
+  return {
+    meta: result.meta,
+    actions: result.actions,
+    diagnostics,
+    actionStatuses,
+    hasErrors: diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+  }
+}
+
+function buildValidationFailureAlert(scriptPath: string, project: ProjectRecord, diagnostics: Diagnostic[]) {
+  const errorDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
+  const summary = errorDiagnostics
+    .slice(0, 3)
+    .map((diagnostic) => `Line ${diagnostic.line}: ${diagnostic.message}`)
+    .join('\n')
+  const remainder = errorDiagnostics.length > 3 ? `\n+ ${errorDiagnostics.length - 3} more` : ''
+
+  return [`Can't open ${basename(scriptPath)} in ${project.name}.`, summary + remainder].filter(Boolean).join('\n\n')
+}
+
+function basename(filePath: string) {
+  return filePath.split(/[\\/]/).pop() || filePath
+}
+
 function currentProjectFor(get: StoreGet) {
   const state = get()
   return state.projects.find((project) => project.id === state.currentProjectId) || null
 }
 
-async function getInitialScriptForBoot(bootState: ProjectBootState, currentProject: ProjectRecord | null) {
+async function rememberCurrentScriptProject(get: StoreGet, set: StoreSet) {
+  const state = get()
+  const project = currentProjectFor(get)
+  if (!project || !state.scriptPath) {
+    return
+  }
+
+  const recentPresentationPaths = await window.smh.rememberRecentPresentationPath(state.scriptPath, project.id)
+  set({ recentPresentationPaths })
+}
+
+async function getInitialScriptForBoot(bootState: ProjectBootState, _currentProject: ProjectRecord | null) {
   if (bootState.pendingScriptPath) {
     return loadExternalScript(bootState.pendingScriptPath)
   }
 
-  if (currentProject) {
-    return loadDefaultOrSampleScript(currentProject)
-  }
-
   return {
-    content: createSampleScript(),
+    content: '',
     path: null
   }
 }
 
 async function handleIncomingExternalScript(scriptPath: string, set: StoreSet, get: StoreGet) {
-  const loaded = await loadExternalScript(scriptPath)
-  activeRunId += 1
+  await openPresentationScript(scriptPath, set, get, { openSelector: true, autoPlay: false })
+}
 
-  const project = currentProjectFor(get)
-  const hasProject = Boolean(project)
+async function openRecentPresentationEntry(entry: RecentPresentationEntry, set: StoreSet, get: StoreGet) {
+  abortActiveRun(set, get)
 
-  set({
-    pendingScriptPath: hasProject ? null : scriptPath,
-    projectSelectorOpen: !hasProject,
+  const rememberedProject = entry.projectId != null ? get().projects.find((project) => project.id === entry.projectId) || null : null
+
+  if (!rememberedProject) {
+    await openPresentationScript(entry.path, set, get, { openSelector: true, autoPlay: false })
+    return
+  }
+
+  const loaded = await loadExternalScript(entry.path)
+  const validation = await validateScriptAgainstProject(loaded.content, rememberedProject)
+
+  if (validation.hasErrors) {
+    await openPresentationScript(entry.path, set, get, { openSelector: true, autoPlay: false })
+    window.alert(`Can't reopen ${basename(entry.path)} in ${rememberedProject.name}. Choose a project again.`)
+    return
+  }
+
+  const project = await window.smh.setCurrentProject(rememberedProject.id)
+  const recentPresentationPaths = await window.smh.rememberRecentPresentationPath(loaded.path, project.id)
+
+  set((state: AppState) => ({
+    currentProjectId: project.id,
+    pendingScriptPath: null,
+    projectSelectorOpen: false,
+    recentPresentationPaths,
     script: loaded.content,
     scriptPath: loaded.path,
-    meta: {},
-    actions: [],
-    diagnostics: [],
+    meta: validation.meta,
+    actions: validation.actions,
+    diagnostics: validation.diagnostics,
     status: 'idle',
     currentActionIndex: 0,
-    actionStatuses: {},
+    actionStatuses: validation.actionStatuses,
     panels: {},
     panelOrder: [],
     logs: [],
-    layoutMode: 'two-column',
-    tts: createDefaultTtsState(get().tts)
-  })
-
-  if (hasProject) {
-    await window.smh.clearPendingScript()
-    const valid = await get().validate()
-    if (valid) {
-      await get().play()
-    }
-    return
-  }
-}
-
-async function loadDefaultOrSampleScript(project: ProjectRecord) {
-  if (project.defaultScriptPath) {
-    const file = await window.smh.readTextFile(project.defaultScriptPath, project.rootPath)
-    if (file.exists) {
-      return {
-        content: file.content,
-        path: file.path
-      }
-    }
-  }
-
-  return {
-    content: createSampleScript(project),
-    path: null
-  }
+    layoutMode: validation.meta.startLayout || 'two-column',
+    tts: createDefaultTtsState(state.tts),
+    projects: state.projects.map((item) => (item.id === project.id ? project : item)).sort(compareProjects)
+  }))
 }
 
 async function loadExternalScript(scriptPath: string) {
@@ -537,6 +687,52 @@ function ensureProjectSelected(set: StoreSet, get: StoreGet) {
   return false
 }
 
+async function openPresentationScript(
+  scriptPath: string,
+  set: StoreSet,
+  get: StoreGet,
+  options: { openSelector: boolean; autoPlay: boolean }
+) {
+  const loaded = await loadExternalScript(scriptPath)
+  const recentProjectId = options.openSelector ? null : currentProjectFor(get)?.id ?? null
+  const recentPresentationPaths = await window.smh.rememberRecentPresentationPath(loaded.path, recentProjectId)
+
+  abortActiveRun(set, get)
+
+  if (options.openSelector) {
+    await window.smh.clearCurrentProject()
+  }
+
+  const hasProject = !options.openSelector && Boolean(currentProjectFor(get))
+
+  set((state: AppState) => ({
+    currentProjectId: options.openSelector ? null : state.currentProjectId,
+    pendingScriptPath: hasProject ? null : loaded.path,
+    projectSelectorOpen: options.openSelector || !hasProject,
+    recentPresentationPaths,
+    script: loaded.content,
+    scriptPath: loaded.path,
+    meta: {},
+    actions: [],
+    diagnostics: [],
+    status: 'idle',
+    currentActionIndex: 0,
+    actionStatuses: {},
+    panels: {},
+    panelOrder: [],
+    logs: [],
+    layoutMode: 'two-column',
+    tts: createDefaultTtsState(state.tts)
+  }))
+
+  if (hasProject) {
+    const valid = await get().validate()
+    if (options.autoPlay && valid) {
+      await get().play()
+    }
+  }
+}
+
 async function runFromCurrentIndex(set: StoreSet, get: StoreGet) {
   activeRunId += 1
   const runId = activeRunId
@@ -547,26 +743,46 @@ async function runFromCurrentIndex(set: StoreSet, get: StoreGet) {
 
   try {
     for (let index = get().currentActionIndex; index < actions.length; index += 1) {
-      await waitWhilePaused(get, runId)
-
       const action = actions[index]
       set({ currentActionIndex: index })
-      setActionStatus(set, action.id, 'running')
 
-      if (!action.isExecutable) {
+      try {
+        await waitWhilePaused(get, runId)
+
+        if (pendingSkipCount > 0) {
+          throw new SkipActionError(action.id)
+        }
+
+        setActionStatus(set, action.id, 'running')
+
+        if (!action.isExecutable) {
+          setActionStatus(set, action.id, 'done')
+          continue
+        }
+
+        await executeAction(action, set, get, runId)
+
+        if (runId !== activeRunId) {
+          throw new RunAbortedError()
+        }
+
         setActionStatus(set, action.id, 'done')
-        continue
-      }
+        set({ currentActionIndex: index + 1 })
+      } catch (error) {
+        if (error instanceof SkipActionError) {
+          consumeSkipRequest()
+          setActionStatus(set, action.id, 'skipped')
+          pushLog(set, 'info', `Skipped ${action.summary}`, action.id)
+          set({ currentActionIndex: index + 1 })
+          continue
+        }
 
-      await executeAction(action, set, get, runId)
-      if (runId !== activeRunId) {
-        throw new RunAbortedError()
+        throw error
       }
-      setActionStatus(set, action.id, 'done')
-      set({ currentActionIndex: index + 1 })
     }
 
     if (activeRunId === runId) {
+      clearSkipQueue()
       set({ status: 'completed' })
       pushLog(set, 'info', 'Playback completed')
     }
@@ -580,6 +796,7 @@ async function runFromCurrentIndex(set: StoreSet, get: StoreGet) {
       setActionStatus(set, action.id, 'failed')
     }
 
+    clearSkipQueue()
     set({ status: 'error' })
     pushLog(set, 'error', error instanceof Error ? error.message : 'Playback failed', action?.id)
   }
@@ -587,6 +804,7 @@ async function runFromCurrentIndex(set: StoreSet, get: StoreGet) {
 
 function abortActiveRun(set: StoreSet, get: StoreGet) {
   activeRunId += 1
+  clearSkipQueue()
   activeTtsSession?.stop()
 
   set((state: AppState) => ({
@@ -597,6 +815,7 @@ function abortActiveRun(set: StoreSet, get: StoreGet) {
 
 function resetRuntime(set: StoreSet, get: StoreGet) {
   const actionStatuses = Object.fromEntries(get().actions.map((action) => [action.id, 'pending' as ActionStatus]))
+  clearSkipQueue()
 
   set({
     status: 'idle',
@@ -766,13 +985,13 @@ async function executeAction(action: ParsedAction, set: StoreSet, get: StoreGet,
 
     case 'pause': {
       const [seconds] = action.args as [number]
-      await delay((seconds * 1000) / get().speedMultiplier, get, runId)
+      await delay(seconds * 1000, get, runId, action.id)
       return
     }
 
     case 'tts': {
       const [text] = action.args as [string]
-      await speakText(text, get().muteTts, get().meta.rate, set, get, runId)
+      await speakText(text, get().muteTts, get().meta.rate, set, get, runId, action.id)
       pushLog(set, 'info', 'TTS completed', action.id)
       return
     }
@@ -820,11 +1039,40 @@ function pushLog(set: StoreSet, level: RuntimeLogEntry['level'], message: string
   }))
 }
 
+function consumeSkipRequest() {
+  if (pendingSkipCount <= 0) {
+    return false
+  }
+
+  pendingSkipCount -= 1
+  return true
+}
+
+function clearSkipQueue() {
+  pendingSkipCount = 0
+  activeSkippableAction = null
+}
+
+function setActiveSkippableAction(runId: number, actionId: string, skip: () => void) {
+  activeSkippableAction = { runId, actionId, skip }
+}
+
+function clearActiveSkippableAction(runId: number, actionId: string) {
+  if (activeSkippableAction?.runId === runId && activeSkippableAction.actionId === actionId) {
+    activeSkippableAction = null
+  }
+}
+
 async function waitWhilePaused(get: StoreGet, runId: number) {
   while (get().status === 'paused') {
     if (runId !== activeRunId) {
       throw new RunAbortedError()
     }
+
+    if (pendingSkipCount > 0 && !activeSkippableAction) {
+      throw new SkipActionError()
+    }
+
     await delay(75)
   }
 
@@ -833,41 +1081,71 @@ async function waitWhilePaused(get: StoreGet, runId: number) {
   }
 }
 
-function delay(ms: number, get?: StoreGet, runId?: number) {
+function delay(ms: number, get?: StoreGet, runId?: number, actionId?: string) {
   return new Promise<void>((resolve, reject) => {
     const started = Date.now()
+    let settled = false
+    let timeoutId: number | null = null
+
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      if (timeoutId != null) {
+        window.clearTimeout(timeoutId)
+      }
+      if (runId != null && actionId) {
+        clearActiveSkippableAction(runId, actionId)
+      }
+      callback()
+    }
 
     const tick = () => {
+      if (settled) {
+        return
+      }
+
       if (runId != null && runId !== activeRunId) {
-        reject(new RunAbortedError())
+        finish(() => reject(new RunAbortedError()))
         return
       }
 
       if (get?.().status === 'idle') {
-        reject(new RunAbortedError())
+        finish(() => reject(new RunAbortedError()))
         return
       }
 
       if (get?.().status === 'paused') {
-        window.setTimeout(tick, 75)
+        timeoutId = window.setTimeout(tick, 75)
         return
       }
 
       if (Date.now() - started >= ms) {
-        resolve()
+        finish(resolve)
         return
       }
 
-      window.setTimeout(tick, 25)
+      timeoutId = window.setTimeout(tick, 25)
     }
 
-    window.setTimeout(tick, 25)
+    if (runId != null && actionId) {
+      setActiveSkippableAction(runId, actionId, () => finish(() => reject(new SkipActionError(actionId))))
+    }
+
+    timeoutId = window.setTimeout(tick, 25)
   })
 }
 
-async function speakText(text: string, mute: boolean, rate: number | undefined, set: StoreSet, get: StoreGet, runId: number) {
+async function speakText(
+  text: string,
+  mute: boolean,
+  rate: number | undefined,
+  set: StoreSet,
+  get: StoreGet,
+  runId: number,
+  actionId: string
+) {
   if (mute) {
-    await delay(50, get, runId)
+    await delay(50, get, runId, actionId)
     return
   }
 
@@ -890,11 +1168,12 @@ async function speakText(text: string, mute: boolean, rate: number | undefined, 
   const audioContext = new AudioContextClass()
   const wavBuffer = decodeBase64Audio(speechFile.base64Audio)
   const decodedBuffer = await audioContext.decodeAudioData(wavBuffer)
-  const durationMs = decodedBuffer.duration * 1000
+  const paddedBuffer = appendTrailingSilence(audioContext, decodedBuffer, TTS_TRAILING_SILENCE_MS)
+  const durationMs = paddedBuffer.duration * 1000
   const source = audioContext.createBufferSource()
   const gainNode = audioContext.createGain()
 
-  source.buffer = decodedBuffer
+  source.buffer = paddedBuffer
   gainNode.gain.value = get().tts.volume
   source.connect(gainNode)
   gainNode.connect(audioContext.destination)
@@ -929,6 +1208,7 @@ async function speakText(text: string, mute: boolean, rate: number | undefined, 
       source.disconnect()
       gainNode.disconnect()
       void audioContext.close()
+      clearActiveSkippableAction(runId, actionId)
       if (activeTtsSession?.runId === runId) {
         activeTtsSession = null
       }
@@ -953,6 +1233,10 @@ async function speakText(text: string, mute: boolean, rate: number | undefined, 
         fail(new RunAbortedError())
       }
     }
+
+    setActiveSkippableAction(runId, actionId, () => {
+      fail(new SkipActionError(actionId))
+    })
 
     const intervalId = window.setInterval(() => {
       const runtimeStatus = get().status
@@ -996,8 +1280,10 @@ async function speakText(text: string, mute: boolean, rate: number | undefined, 
     }, 50)
 
     source.onended = () => {
-      cleanup()
-      resolve()
+      window.setTimeout(() => {
+        cleanup()
+        resolve()
+      }, TTS_END_GRACE_MS)
     }
 
     try {
@@ -1006,6 +1292,21 @@ async function speakText(text: string, mute: boolean, rate: number | undefined, 
       fail(new Error('System TTS audio playback failed'))
     }
   })
+}
+
+function appendTrailingSilence(audioContext: AudioContext, buffer: AudioBuffer, trailingSilenceMs: number) {
+  const extraFrames = Math.max(0, Math.round((buffer.sampleRate * trailingSilenceMs) / 1000))
+  if (extraFrames === 0) {
+    return buffer
+  }
+
+  const paddedBuffer = audioContext.createBuffer(buffer.numberOfChannels, buffer.length + extraFrames, buffer.sampleRate)
+
+  for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+    paddedBuffer.getChannelData(channel).set(buffer.getChannelData(channel), 0)
+  }
+
+  return paddedBuffer
 }
 
 function decodeBase64Audio(base64Audio: string) {

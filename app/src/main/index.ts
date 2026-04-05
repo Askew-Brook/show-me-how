@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process'
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, unlink } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -16,8 +16,7 @@ const controlPort = 48561
 const seededProjects = [
   {
     name: 'eyj',
-    rootPath: '/Users/spriggs/Documents/Projects/eyj',
-    defaultScriptPath: null
+    rootPath: '/Users/spriggs/Documents/Projects/eyj'
   }
 ]
 
@@ -25,15 +24,19 @@ interface ProjectRecord {
   id: number
   name: string
   rootPath: string
-  defaultScriptPath: string | null
+  gitRemoteSlug: string | null
   createdAt: string
   updatedAt: string
+}
+
+interface RecentPresentationEntry {
+  path: string
+  projectId: number | null
 }
 
 interface NormalizedProjectInput {
   name: string
   rootPath: string
-  defaultScriptPath: string | null
 }
 
 let database: DatabaseSync | null = null
@@ -99,7 +102,7 @@ function getDatabase() {
     );
   `)
 
-  ensureProjectColumn('default_script_path', 'TEXT')
+  ensureProjectColumn('git_remote_slug', 'TEXT')
   seedKnownProjects()
 
   return database
@@ -135,11 +138,11 @@ function seedKnownProjects() {
       `INSERT INTO projects (
         name,
         root_path,
-        default_script_path,
+        git_remote_slug,
         created_at,
         updated_at
       ) VALUES (?, ?, ?, ?, ?)`
-    ).run(project.name, project.rootPath, project.defaultScriptPath, timestamp, timestamp)
+    ).run(project.name, project.rootPath, null, timestamp, timestamp)
   }
 }
 
@@ -148,7 +151,7 @@ function mapProject(row: any): ProjectRecord {
     id: Number(row.id),
     name: String(row.name),
     rootPath: String(row.root_path),
-    defaultScriptPath: row.default_script_path ? String(row.default_script_path) : null,
+    gitRemoteSlug: row.git_remote_slug ? String(row.git_remote_slug) : null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   }
@@ -162,7 +165,7 @@ function listProjects() {
          id,
          name,
          root_path,
-         default_script_path,
+         git_remote_slug,
          created_at,
          updated_at
        FROM projects
@@ -181,7 +184,7 @@ function getProjectById(projectId: number) {
          id,
          name,
          root_path,
-         default_script_path,
+         git_remote_slug,
          created_at,
          updated_at
        FROM projects
@@ -215,14 +218,80 @@ function setCurrentProjectId(projectId: number | null) {
   ).run('currentProjectId', String(projectId))
 }
 
-function normalizeProjectInput(input: {
-  name: string
-  rootPath: string
-  defaultScriptPath?: string | null
-}): NormalizedProjectInput {
+function normalizeRecentPresentationEntry(value: unknown): RecentPresentationEntry | null {
+  if (typeof value === 'string') {
+    return {
+      path: path.resolve(value),
+      projectId: null
+    }
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const candidate = value as { path?: unknown; projectId?: unknown }
+  if (typeof candidate.path !== 'string' || candidate.path.trim() === '') {
+    return null
+  }
+
+  const projectId = typeof candidate.projectId === 'number' && Number.isFinite(candidate.projectId) ? candidate.projectId : null
+
+  return {
+    path: path.resolve(candidate.path),
+    projectId
+  }
+}
+
+function getRecentPresentationPaths() {
+  const db = getDatabase()
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('recentPresentationPaths') as { value: string } | undefined
+  if (!row) return []
+
+  try {
+    const parsed = JSON.parse(row.value)
+    if (!Array.isArray(parsed)) {
+      return []
+    }
+
+    const entries: RecentPresentationEntry[] = []
+    const seenPaths = new Set<string>()
+
+    for (const value of parsed) {
+      const entry = normalizeRecentPresentationEntry(value)
+      if (!entry || seenPaths.has(entry.path)) {
+        continue
+      }
+      seenPaths.add(entry.path)
+      entries.push(entry)
+    }
+
+    return entries
+  } catch {
+    return []
+  }
+}
+
+function rememberRecentPresentationPath(filePath: string, projectId?: number | null) {
+  const db = getDatabase()
+  const resolvedPath = path.resolve(filePath)
+  const nextEntries = [
+    { path: resolvedPath, projectId: projectId ?? null },
+    ...getRecentPresentationPaths().filter((entry) => entry.path !== resolvedPath)
+  ].slice(0, 12)
+
+  db.prepare(
+    `INSERT INTO app_settings (key, value)
+     VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run('recentPresentationPaths', JSON.stringify(nextEntries))
+
+  return nextEntries
+}
+
+function normalizeProjectInput(input: { name: string; rootPath: string }): NormalizedProjectInput {
   const rootPath = path.resolve(input.rootPath.trim())
   const name = input.name.trim() || path.basename(rootPath)
-  const defaultScriptPath = input.defaultScriptPath?.trim() ? input.defaultScriptPath.trim() : null
 
   if (!rootPath) {
     throw new Error('Project root is required')
@@ -232,17 +301,9 @@ function normalizeProjectInput(input: {
     throw new Error(`Project root does not exist: ${rootPath}`)
   }
 
-  if (defaultScriptPath) {
-    const resolvedScriptPath = resolveScriptPath(defaultScriptPath, rootPath)
-    if (!existsSync(resolvedScriptPath)) {
-      throw new Error(`Default script does not exist: ${resolvedScriptPath}`)
-    }
-  }
-
   return {
     name,
-    rootPath,
-    defaultScriptPath
+    rootPath
   }
 }
 
@@ -259,6 +320,110 @@ function resolveScriptPath(filePath: string, projectRootPath?: string | null) {
   return path.resolve(trimmed)
 }
 
+function execGitCommand(args: string[], cwd: string) {
+  return new Promise<string>((resolve, reject) => {
+    execFile('git', ['-C', cwd, ...args], (error, stdout) => {
+      if (error) {
+        reject(error)
+        return
+      }
+
+      resolve(String(stdout).trim())
+    })
+  })
+}
+
+function parseGitRemoteSlug(remoteUrl: string) {
+  const trimmed = remoteUrl.trim()
+  if (!trimmed) return null
+
+  const scpMatch = trimmed.match(/^[^@]+@[^:]+:([^/]+)\/([^/]+?)(?:\.git)?$/)
+  if (scpMatch) {
+    return `${scpMatch[1]}/${scpMatch[2]}`
+  }
+
+  try {
+    const parsed = new URL(trimmed)
+    const parts = parsed.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)
+    if (parts.length >= 2) {
+      const owner = parts[parts.length - 2]
+      const repo = parts[parts.length - 1].replace(/\.git$/, '')
+      if (owner && repo) {
+        return `${owner}/${repo}`
+      }
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+async function inspectGitProject(projectRoot: string) {
+  try {
+    const topLevel = await execGitCommand(['rev-parse', '--show-toplevel'], projectRoot)
+    if (path.resolve(topLevel) !== path.resolve(projectRoot)) {
+      return null
+    }
+
+    const remoteUrl = await execGitCommand(['config', '--get', 'remote.origin.url'], projectRoot)
+    const gitRemoteSlug = parseGitRemoteSlug(remoteUrl)
+    if (!gitRemoteSlug) {
+      return null
+    }
+
+    return {
+      rootPath: path.resolve(projectRoot),
+      gitRemoteSlug,
+      name: gitRemoteSlug.split('/').pop() || path.basename(projectRoot)
+    }
+  } catch {
+    return null
+  }
+}
+
+async function collectGitProjects(parentPath: string) {
+  const results: Array<{ name: string; rootPath: string; gitRemoteSlug: string }> = []
+  let skippedInvalid = 0
+  const seenRoots = new Set<string>()
+
+  async function visit(currentPath: string): Promise<void> {
+    let entries
+    try {
+      entries = await readdir(currentPath, { withFileTypes: true })
+    } catch {
+      return
+    }
+
+    const hasGitMarker = entries.some((entry) => entry.name === '.git')
+    if (hasGitMarker) {
+      const project = await inspectGitProject(currentPath)
+      if (project) {
+        if (!seenRoots.has(project.rootPath)) {
+          seenRoots.add(project.rootPath)
+          results.push(project)
+        }
+      } else {
+        skippedInvalid += 1
+      }
+      return
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.next' || entry.name === 'dist') continue
+      await visit(path.join(currentPath, entry.name))
+    }
+  }
+
+  await visit(path.resolve(parentPath))
+
+  return {
+    projects: results,
+    skippedInvalid
+  }
+}
+
 function isPresentationFile(filePath: string) {
   return filePath.toLowerCase().endsWith('.smh')
 }
@@ -266,6 +431,7 @@ function isPresentationFile(filePath: string) {
 function queueExternalScriptOpen(filePath: string) {
   const resolved = path.resolve(filePath)
   pendingScriptPath = resolved
+  rememberRecentPresentationPath(resolved, getCurrentProjectId())
 
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('app:externalScriptOpened', resolved)
@@ -397,6 +563,24 @@ ipcMain.handle('dialog:pickFile', async (_event, projectRootPath?: string | null
   return result.filePaths[0]
 })
 
+ipcMain.handle('dialog:pickPresentationFile', async (_event, projectRootPath?: string | null) => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    title: 'Open presentation',
+    defaultPath: projectRootPath?.trim() || (existsSync(defaultProjectsPath) ? defaultProjectsPath : undefined),
+    filters: [
+      { name: 'ShowMeHow Scripts', extensions: ['smh'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  })
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return null
+  }
+
+  return result.filePaths[0]
+})
+
 ipcMain.handle('dialog:pickFolder', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openDirectory', 'createDirectory'],
@@ -419,7 +603,7 @@ ipcMain.handle('projects:getBootState', async () => {
   }
 })
 
-ipcMain.handle('projects:create', async (_event, input: { name: string; rootPath: string; defaultScriptPath?: string | null }) => {
+ipcMain.handle('projects:create', async (_event, input: { name: string; rootPath: string }) => {
   const db = getDatabase()
   const normalized = normalizeProjectInput(input)
   const timestamp = new Date().toISOString()
@@ -430,12 +614,12 @@ ipcMain.handle('projects:create', async (_event, input: { name: string; rootPath
         `INSERT INTO projects (
           name,
           root_path,
-          default_script_path,
+          git_remote_slug,
           created_at,
           updated_at
         ) VALUES (?, ?, ?, ?, ?)`
       )
-      .run(normalized.name, normalized.rootPath, normalized.defaultScriptPath, timestamp, timestamp)
+      .run(normalized.name, normalized.rootPath, null, timestamp, timestamp)
 
     return getProjectById(Number(result.lastInsertRowid))
   } catch (error) {
@@ -448,23 +632,27 @@ ipcMain.handle('projects:create', async (_event, input: { name: string; rootPath
 
 ipcMain.handle(
   'projects:update',
-  async (_event, projectId: number, input: { name: string; rootPath: string; defaultScriptPath?: string | null }) => {
+  async (_event, projectId: number, input: { name: string; rootPath: string }) => {
     const db = getDatabase()
     const normalized = normalizeProjectInput(input)
-    const existing = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId)
+    const existing = db
+      .prepare('SELECT id, root_path, git_remote_slug FROM projects WHERE id = ?')
+      .get(projectId) as { id: number; root_path: string; git_remote_slug: string | null } | undefined
     if (!existing) {
       throw new Error(`Project not found: ${projectId}`)
     }
+
+    const nextGitRemoteSlug = existing.root_path === normalized.rootPath ? existing.git_remote_slug : null
 
     try {
       db.prepare(
         `UPDATE projects
          SET name = ?,
              root_path = ?,
-             default_script_path = ?,
+             git_remote_slug = ?,
              updated_at = ?
          WHERE id = ?`
-      ).run(normalized.name, normalized.rootPath, normalized.defaultScriptPath, new Date().toISOString(), projectId)
+      ).run(normalized.name, normalized.rootPath, nextGitRemoteSlug, new Date().toISOString(), projectId)
     } catch (error) {
       if (error instanceof Error && error.message.includes('UNIQUE')) {
         throw new Error(`Project already exists for root: ${normalized.rootPath}`)
@@ -475,6 +663,55 @@ ipcMain.handle(
     return getProjectById(projectId)
   }
 )
+
+ipcMain.handle('projects:importFromParent', async (_event, parentPath: string) => {
+  const db = getDatabase()
+  const normalizedParentPath = path.resolve(parentPath.trim())
+
+  if (!normalizedParentPath) {
+    throw new Error('Parent folder is required')
+  }
+
+  if (!existsSync(normalizedParentPath)) {
+    throw new Error(`Parent folder does not exist: ${normalizedParentPath}`)
+  }
+
+  const discovered = await collectGitProjects(normalizedParentPath)
+  const existingPaths = new Set(
+    (db.prepare('SELECT root_path FROM projects').all() as Array<{ root_path: string }>).map((row) => path.resolve(String(row.root_path)))
+  )
+
+  let imported = 0
+  let skippedExisting = 0
+
+  for (const project of discovered.projects) {
+    if (existingPaths.has(project.rootPath)) {
+      skippedExisting += 1
+      continue
+    }
+
+    const timestamp = new Date().toISOString()
+    db.prepare(
+      `INSERT INTO projects (
+        name,
+        root_path,
+        git_remote_slug,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?)`
+    ).run(project.name, project.rootPath, project.gitRemoteSlug, timestamp, timestamp)
+
+    existingPaths.add(project.rootPath)
+    imported += 1
+  }
+
+  return {
+    projects: listProjects(),
+    imported,
+    skippedExisting,
+    skippedInvalid: discovered.skippedInvalid
+  }
+})
 
 ipcMain.handle('projects:delete', async (_event, projectId: number) => {
   const db = getDatabase()
@@ -500,6 +737,23 @@ ipcMain.handle('projects:setCurrent', async (_event, projectId: number) => {
 
   setCurrentProjectId(projectId)
   return project
+})
+
+ipcMain.handle('projects:clearCurrent', async () => {
+  setCurrentProjectId(null)
+  return {
+    projects: listProjects(),
+    currentProjectId: null,
+    pendingScriptPath
+  }
+})
+
+ipcMain.handle('app:getRecentPresentationPaths', async () => {
+  return getRecentPresentationPaths()
+})
+
+ipcMain.handle('app:rememberRecentPresentationPath', async (_event, filePath: string, projectId?: number | null) => {
+  return rememberRecentPresentationPath(filePath, projectId)
 })
 
 ipcMain.handle('app:clearPendingScript', async () => {

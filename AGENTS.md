@@ -15,4 +15,5 @@ ShowMeHow = small Electron app for playing `.smh` scripted walkthroughs with nar
 
 ## Notes
 - Current prototype is mainly code-walkthrough focused.
+- Any new visual UI surface or control should also be added to the dev-mode overlay labeling system.
 - `ShowMeHow.app/` and `bundle-output/` are local binaries/build output, not source.

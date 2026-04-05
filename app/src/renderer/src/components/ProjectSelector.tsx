@@ -1,58 +1,55 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ProjectInput, ProjectRecord } from '../lib/projects'
+import { useEffect, useState } from 'react'
+import type { ProjectImportResult, ProjectInput, ProjectRecord } from '../lib/projects'
+import { badgeClass, buttonClass, inputClass } from '../lib/ui'
 
 interface ProjectSelectorProps {
   projects: ProjectRecord[]
-  currentProjectId: number | null
   pendingScriptPath: string | null
-  canClose: boolean
-  onClose: () => void
   onSelect: (projectId: number) => Promise<void>
-  onCreate: (input: ProjectInput) => Promise<void>
+  onCreate: (input: ProjectInput) => Promise<ProjectRecord>
+  onImportFromParent: (parentPath: string) => Promise<ProjectImportResult>
   onUpdate: (projectId: number, input: ProjectInput) => Promise<void>
   onDelete: (projectId: number) => Promise<void>
 }
 
-function inputClass() {
-  return 'w-full rounded border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none'
-}
-
-function buttonClass() {
-  return 'rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-100 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50'
-}
+const pageClass = 'flex h-full flex-col bg-[#17181b] text-[#eef1f4]'
+const panelClass = 'rounded-md border border-[#34383e] bg-[#202327]'
+const rowClass = 'rounded-md border border-[#34383e] bg-[#1b1e22]'
+const fieldLabelClass = 'mb-1 block text-xs text-[#a7adb6]'
+const helperTextClass = 'text-xs text-[#8b929c]'
 
 function basename(input: string) {
   return input.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || input
 }
 
-function relativePath(filePath: string, rootPath: string) {
-  const normalizedRoot = rootPath.endsWith('/') ? rootPath : `${rootPath}/`
-  return filePath.startsWith(normalizedRoot) ? filePath.slice(normalizedRoot.length) : filePath
+function dirname(input: string) {
+  const normalized = input.replace(/[\\/]+$/, '')
+  const parts = normalized.split(/[\\/]/)
+  parts.pop()
+  return parts.join('/') || '/'
 }
 
 function createBlankProject(): ProjectInput {
   return {
     name: '',
-    rootPath: '',
-    defaultScriptPath: ''
+    rootPath: ''
   }
 }
 
 export default function ProjectSelector({
   projects,
-  currentProjectId,
   pendingScriptPath,
-  canClose,
-  onClose,
   onSelect,
   onCreate,
+  onImportFromParent,
   onUpdate,
   onDelete
 }: ProjectSelectorProps) {
   const [newProject, setNewProject] = useState<ProjectInput>(createBlankProject())
   const [drafts, setDrafts] = useState<Record<number, ProjectInput>>({})
   const [busyKey, setBusyKey] = useState<string | null>(null)
-  const [message, setMessage] = useState<string>('')
+  const [expandedProjectId, setExpandedProjectId] = useState<number | null>(null)
+  const [message, setMessage] = useState('')
 
   useEffect(() => {
     setDrafts((existing) => {
@@ -60,18 +57,12 @@ export default function ProjectSelector({
       for (const project of projects) {
         next[project.id] = existing[project.id] || {
           name: project.name,
-          rootPath: project.rootPath,
-          defaultScriptPath: project.defaultScriptPath || ''
+          rootPath: project.rootPath
         }
       }
       return next
     })
   }, [projects])
-
-  const currentProject = useMemo(
-    () => projects.find((project) => project.id === currentProjectId) || null,
-    [projects, currentProjectId]
-  )
 
   async function chooseNewFolder() {
     const folder = await window.smh.pickFolder()
@@ -98,46 +89,13 @@ export default function ProjectSelector({
     }))
   }
 
-  async function chooseNewDefaultScript() {
-    if (!newProject.rootPath.trim()) {
-      setMessage('Choose the project root first so the default script can be stored as a relative path.')
-      return
-    }
-
-    const filePath = await window.smh.pickFile(newProject.rootPath)
-    if (!filePath) return
-
-    setNewProject((state) => ({
-      ...state,
-      defaultScriptPath: relativePath(filePath, state.rootPath)
-    }))
-  }
-
-  async function chooseExistingDefaultScript(projectId: number) {
-    const draft = drafts[projectId]
-    if (!draft?.rootPath.trim()) {
-      setMessage('Choose the project root first so the default script can be stored as a relative path.')
-      return
-    }
-
-    const filePath = await window.smh.pickFile(draft.rootPath)
-    if (!filePath) return
-
-    setDrafts((state) => ({
-      ...state,
-      [projectId]: {
-        ...draft,
-        defaultScriptPath: relativePath(filePath, draft.rootPath)
-      }
-    }))
-  }
-
   async function handleCreate() {
     setBusyKey('create')
     setMessage('')
     try {
-      await onCreate(newProject)
+      const project = await onCreate(newProject)
       setNewProject(createBlankProject())
+      await onSelect(project.id)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to create project')
     } finally {
@@ -145,50 +103,171 @@ export default function ProjectSelector({
     }
   }
 
-  return (
-    <div className="flex h-full flex-col bg-zinc-950 text-zinc-100">
-      <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-6 py-8">
-        <div className="mb-8 border-b border-zinc-800 pb-6">
-          <div className="text-center">
-            <div className="text-3xl font-semibold tracking-[0.2em] text-white">SHOW ME HOW</div>
-            <div className="mt-2 text-sm text-zinc-400">Project selector for code walkthroughs</div>
+  async function handleImportFromParent() {
+    const parentPath = await window.smh.pickFolder()
+    if (!parentPath) return
+
+    setBusyKey('import')
+    setMessage('')
+    try {
+      const result = await onImportFromParent(parentPath)
+      const parts = [`Imported ${result.imported}`]
+      if (result.skippedExisting) parts.push(`ignored ${result.skippedExisting} existing`)
+      if (result.skippedInvalid) parts.push(`skipped ${result.skippedInvalid} invalid`)
+      setMessage(parts.join(' · '))
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Failed to import projects')
+    } finally {
+      setBusyKey(null)
+    }
+  }
+
+  if (pendingScriptPath) {
+    return (
+      <div className={pageClass}>
+        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-5 py-8">
+          <header className="mb-6">
+            <h1 className="text-base font-semibold text-[#f4f6f8]">Choose project</h1>
+            <div className="mt-3 rounded-md border border-[#34383e] bg-[#202327] px-4 py-3">
+              <div className="text-sm text-[#eef1f4]">{basename(pendingScriptPath)}</div>
+              <div className="mt-1 text-xs text-[#8b929c]">{dirname(pendingScriptPath)}</div>
+            </div>
+          </header>
+
+          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+            <section className={`${panelClass} min-h-0 p-3`}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-[#f4f6f8]">Saved projects</div>
+                  <div className={helperTextClass}>Choose the codebase this walkthrough should run against.</div>
+                </div>
+                <span className={badgeClass()}>{projects.length}</span>
+              </div>
+
+              <div className="space-y-2 overflow-auto">
+                {projects.map((project) => (
+                  <button
+                    key={project.id}
+                    className="flex w-full items-center justify-between rounded-md border border-[#34383e] bg-[#1b1e22] px-3 py-3 text-left transition-colors hover:bg-[#22262b]"
+                    disabled={busyKey === `open-${project.id}`}
+                    onClick={async () => {
+                      setBusyKey(`open-${project.id}`)
+                      setMessage('')
+                      try {
+                        await onSelect(project.id)
+                      } catch (error) {
+                        setMessage(error instanceof Error ? error.message : 'Failed to open project')
+                      } finally {
+                        setBusyKey(null)
+                      }
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-[#f4f6f8]">{project.name}</span>
+                        {project.gitRemoteSlug ? <span className={badgeClass()}>{project.gitRemoteSlug}</span> : null}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-[#8b929c]">{project.rootPath}</div>
+                    </div>
+                    <span className="ml-4 shrink-0 text-[11px] text-[#b1b7c0]">Run</span>
+                  </button>
+                ))}
+
+                {projects.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-[#34383e] bg-[#1b1e22] px-4 py-8 text-center text-sm text-[#8b929c]">
+                    No projects yet.
+                  </div>
+                ) : null}
+              </div>
+            </section>
+
+            <aside className={`${panelClass} p-4`}>
+              <div className="mb-1 text-sm font-medium text-[#f4f6f8]">New project</div>
+              <div className={`mb-4 ${helperTextClass}`}>Add one manually or import a parent folder of repos.</div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className={fieldLabelClass}>Name</label>
+                  <input
+                    className={inputClass()}
+                    value={newProject.name}
+                    onChange={(event) => setNewProject((state) => ({ ...state, name: event.target.value }))}
+                    placeholder="EYJ"
+                  />
+                </div>
+
+                <div>
+                  <label className={fieldLabelClass}>Project root</label>
+                  <div className="flex gap-2">
+                    <input
+                      className={inputClass()}
+                      value={newProject.rootPath}
+                      onChange={(event) => setNewProject((state) => ({ ...state, rootPath: event.target.value }))}
+                      placeholder="/Users/spriggs/Documents/Projects/eyj"
+                    />
+                    <button className={buttonClass('ghost', 'sm')} onClick={() => void chooseNewFolder()}>
+                      Browse…
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    className={buttonClass('primary')}
+                    onClick={() => void handleCreate()}
+                    disabled={busyKey === 'create' || !newProject.rootPath.trim()}
+                  >
+                    Add
+                  </button>
+                  <button className={buttonClass('secondary')} onClick={() => void handleImportFromParent()} disabled={busyKey === 'import'}>
+                    Import…
+                  </button>
+                </div>
+              </div>
+            </aside>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm text-zinc-300">
-            <div>
-              <div>Current project: {currentProject ? currentProject.name : 'none selected'}</div>
-              <div className="text-xs text-zinc-500">Choose a project root before running a walkthrough.</div>
-            </div>
-            {canClose ? (
-              <button className={buttonClass()} onClick={onClose}>
-                Back to app
-              </button>
-            ) : null}
-          </div>
-
-          {pendingScriptPath ? (
-            <div className="mt-4 rounded border border-amber-700/50 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
-              Opened presentation: <span className="font-mono text-xs">{pendingScriptPath}</span>
-              <div className="mt-1 text-xs text-amber-300/80">Choose the project this script should run against.</div>
-            </div>
-          ) : null}
+          {message ? <div className="mt-4 text-sm text-[#c9d1d9]">{message}</div> : null}
         </div>
+      </div>
+    )
+  }
 
-        <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
-          <section className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
-            <div className="mb-4 text-sm font-medium text-white">Add project</div>
+  return (
+    <div className={pageClass}>
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 py-5">
+        <header className="mb-5 border-b border-[#34383e] pb-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-base font-semibold text-[#f4f6f8]">Projects</h1>
+              <div className="mt-1 text-sm text-[#a7adb6]">Pick a codebase or import a set of repos.</div>
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] text-[#8b929c]">
+              <span className="rounded-md border border-[#34383e] bg-[#202327] px-2 py-1">⌘K</span>
+              <span>Quick switch</span>
+            </div>
+          </div>
+        </header>
+
+        <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[320px_1fr]">
+          <section className={`${panelClass} p-4`}>
+            <div className="mb-1 text-sm font-medium text-[#f4f6f8]">Add project</div>
+            <div className={`mb-4 ${helperTextClass}`}>Store the project name and root folder only.</div>
+
             <div className="space-y-3">
               <div>
-                <div className="mb-1 text-xs text-zinc-400">Name</div>
+                <label className={fieldLabelClass}>Name</label>
                 <input
                   className={inputClass()}
                   value={newProject.name}
                   onChange={(event) => setNewProject((state) => ({ ...state, name: event.target.value }))}
-                  placeholder="eyj"
+                  placeholder="EYJ"
                 />
               </div>
+
               <div>
-                <div className="mb-1 text-xs text-zinc-400">Project root</div>
+                <label className={fieldLabelClass}>Project root</label>
                 <div className="flex gap-2">
                   <input
                     className={inputClass()}
@@ -196,59 +275,59 @@ export default function ProjectSelector({
                     onChange={(event) => setNewProject((state) => ({ ...state, rootPath: event.target.value }))}
                     placeholder="/Users/spriggs/Documents/Projects/eyj"
                   />
-                  <button className={buttonClass()} onClick={() => void chooseNewFolder()}>
-                    Choose
+                  <button className={buttonClass('ghost', 'sm')} onClick={() => void chooseNewFolder()}>
+                    Browse…
                   </button>
                 </div>
               </div>
-              <div>
-                <div className="mb-1 text-xs text-zinc-400">Default .smh script</div>
-                <div className="flex gap-2">
-                  <input
-                    className={inputClass()}
-                    value={newProject.defaultScriptPath}
-                    onChange={(event) => setNewProject((state) => ({ ...state, defaultScriptPath: event.target.value }))}
-                    placeholder="demo.smh"
-                  />
-                  <button className={buttonClass()} onClick={() => void chooseNewDefaultScript()}>
-                    Choose
-                  </button>
-                </div>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  className={buttonClass('primary')}
+                  onClick={() => void handleCreate()}
+                  disabled={busyKey === 'create' || !newProject.rootPath.trim()}
+                >
+                  Add project
+                </button>
+                <button className={buttonClass('secondary')} onClick={() => void handleImportFromParent()} disabled={busyKey === 'import'}>
+                  Import projects…
+                </button>
               </div>
-              <button
-                className={buttonClass()}
-                onClick={() => void handleCreate()}
-                disabled={busyKey === 'create' || !newProject.rootPath.trim()}
-              >
-                Add project
-              </button>
             </div>
           </section>
 
-          <section className="rounded border border-zinc-800 bg-zinc-900/40 p-4">
+          <section className={`${panelClass} min-h-0 p-4`}>
             <div className="mb-4 flex items-center justify-between gap-3">
-              <div className="text-sm font-medium text-white">Saved projects</div>
-              <div className="text-xs text-zinc-500">Edit settings, remove projects, or choose one to run</div>
+              <div>
+                <div className="text-sm font-medium text-[#f4f6f8]">Saved projects</div>
+                <div className={helperTextClass}>Projects stay compact until you open their settings.</div>
+              </div>
+              <span className={badgeClass()}>{projects.length} saved</span>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3 overflow-auto">
               {projects.map((project) => {
                 const draft = drafts[project.id] || {
                   name: project.name,
-                  rootPath: project.rootPath,
-                  defaultScriptPath: project.defaultScriptPath || ''
+                  rootPath: project.rootPath
                 }
 
+                const expanded = expandedProjectId === project.id
+
                 return (
-                  <div key={project.id} className="rounded border border-zinc-800 bg-zinc-950/70 p-4">
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-sm text-white">{project.name}</div>
-                        <div className="text-xs text-zinc-500">{project.id === currentProjectId ? 'current project' : 'saved project'}</div>
+                  <div key={project.id} className={rowClass}>
+                    <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-sm font-medium text-[#f4f6f8]">{project.name}</div>
+                          {project.gitRemoteSlug ? <span className={badgeClass()}>{project.gitRemoteSlug}</span> : null}
+                        </div>
+                        <div className="mt-1 truncate text-xs text-[#8b929c]">{project.rootPath}</div>
                       </div>
-                      <div className="flex gap-2">
+
+                      <div className="flex flex-wrap items-center gap-2">
                         <button
-                          className={buttonClass()}
+                          className={buttonClass('secondary', 'sm')}
                           disabled={busyKey === `open-${project.id}`}
                           onClick={async () => {
                             setBusyKey(`open-${project.id}`)
@@ -262,10 +341,13 @@ export default function ProjectSelector({
                             }
                           }}
                         >
-                          {pendingScriptPath ? 'Run with this project' : 'Open'}
+                          Use
+                        </button>
+                        <button className={buttonClass('ghost', 'sm')} onClick={() => setExpandedProjectId(expanded ? null : project.id)}>
+                          {expanded ? 'Close' : 'Edit'}
                         </button>
                         <button
-                          className={buttonClass()}
+                          className={buttonClass('danger', 'sm')}
                           disabled={busyKey === `delete-${project.id}`}
                           onClick={async () => {
                             setBusyKey(`delete-${project.id}`)
@@ -284,92 +366,79 @@ export default function ProjectSelector({
                       </div>
                     </div>
 
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="mb-1 text-xs text-zinc-400">Name</div>
-                        <input
-                          className={inputClass()}
-                          value={draft.name}
-                          onChange={(event) =>
-                            setDrafts((state) => ({
-                              ...state,
-                              [project.id]: { ...draft, name: event.target.value }
-                            }))
-                          }
-                        />
-                      </div>
-                      <div>
-                        <div className="mb-1 text-xs text-zinc-400">Project root</div>
-                        <div className="flex gap-2">
-                          <input
-                            className={inputClass()}
-                            value={draft.rootPath}
-                            onChange={(event) =>
-                              setDrafts((state) => ({
-                                ...state,
-                                [project.id]: { ...draft, rootPath: event.target.value }
-                              }))
-                            }
-                          />
-                          <button className={buttonClass()} onClick={() => void chooseExistingFolder(project.id)}>
-                            Choose
+                    {expanded ? (
+                      <div className="border-t border-[#34383e] px-4 py-3">
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <label className={fieldLabelClass}>Name</label>
+                            <input
+                              className={inputClass()}
+                              value={draft.name}
+                              onChange={(event) =>
+                                setDrafts((state) => ({
+                                  ...state,
+                                  [project.id]: { ...draft, name: event.target.value }
+                                }))
+                              }
+                            />
+                          </div>
+
+                          <div>
+                            <label className={fieldLabelClass}>Project root</label>
+                            <div className="flex gap-2">
+                              <input
+                                className={inputClass()}
+                                value={draft.rootPath}
+                                onChange={(event) =>
+                                  setDrafts((state) => ({
+                                    ...state,
+                                    [project.id]: { ...draft, rootPath: event.target.value }
+                                  }))
+                                }
+                              />
+                              <button className={buttonClass('ghost', 'sm')} onClick={() => void chooseExistingFolder(project.id)}>
+                                Browse…
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-3 flex justify-end">
+                          <button
+                            className={buttonClass('secondary', 'sm')}
+                            disabled={busyKey === `save-${project.id}`}
+                            onClick={async () => {
+                              setBusyKey(`save-${project.id}`)
+                              setMessage('')
+                              try {
+                                await onUpdate(project.id, draft)
+                                setExpandedProjectId(null)
+                              } catch (error) {
+                                setMessage(error instanceof Error ? error.message : 'Failed to save project')
+                              } finally {
+                                setBusyKey(null)
+                              }
+                            }}
+                          >
+                            Save changes
                           </button>
                         </div>
                       </div>
-                    </div>
-
-                    <div className="mt-3">
-                      <div className="mb-1 text-xs text-zinc-400">Default .smh script</div>
-                      <div className="flex gap-2">
-                        <input
-                          className={inputClass()}
-                          value={draft.defaultScriptPath}
-                          onChange={(event) =>
-                            setDrafts((state) => ({
-                              ...state,
-                              [project.id]: { ...draft, defaultScriptPath: event.target.value }
-                            }))
-                          }
-                        />
-                        <button className={buttonClass()} onClick={() => void chooseExistingDefaultScript(project.id)}>
-                          Choose
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="mt-3">
-                      <button
-                        className={buttonClass()}
-                        disabled={busyKey === `save-${project.id}`}
-                        onClick={async () => {
-                          setBusyKey(`save-${project.id}`)
-                          setMessage('')
-                          try {
-                            await onUpdate(project.id, draft)
-                          } catch (error) {
-                            setMessage(error instanceof Error ? error.message : 'Failed to save project')
-                          } finally {
-                            setBusyKey(null)
-                          }
-                        }}
-                      >
-                        Save settings
-                      </button>
-                    </div>
+                    ) : null}
                   </div>
                 )
               })}
 
               {projects.length === 0 ? (
-                <div className="rounded border border-dashed border-zinc-800 px-4 py-8 text-center text-sm text-zinc-500">
-                  No projects yet. Add one on the left.
+                <div className="rounded-md border border-dashed border-[#34383e] bg-[#1b1e22] px-4 py-8 text-center text-sm text-[#8b929c]">
+                  No projects yet. Add one to continue.
                 </div>
               ) : null}
             </div>
           </section>
         </div>
 
-        {message ? <div className="mt-4 text-sm text-amber-300">{message}</div> : null}
+        {message ? <div className="mt-4 text-sm text-[#c9d1d9]">{message}</div> : null}
       </div>
     </div>
   )
