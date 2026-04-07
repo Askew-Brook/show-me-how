@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$ROOT_DIR/app"
+OUTPUT_DIR="$ROOT_DIR/bundle-output"
+dry_run=0
+args=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry|--dry-run)
+      dry_run=1
+      shift
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if [[ ${#args[@]} -gt 2 ]]; then
+  echo "Usage: ./release [--dry|--dry-run] [version] [binary-zip-path]" >&2
+  exit 1
+fi
+
+version="${args[0]:-$(node -p "require('$APP_DIR/package.json').version")}"
+binary_path="${args[1]:-$OUTPUT_DIR/ShowMeHow-$version-mac-arm64.zip}"
+tag="v$version"
+
+if [[ ! -f "$binary_path" ]]; then
+  echo "Binary not found: $binary_path" >&2
+  exit 1
+fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "GitHub CLI is required: gh" >&2
+  exit 1
+fi
+
+if [[ $dry_run -eq 1 ]]; then
+  echo "Dry run"
+  echo "Version: $version"
+  echo "Tag: $tag"
+  echo "Binary: $binary_path"
+  printf 'Command: '
+  printf '%q ' gh release create "$tag" "$binary_path" --title "$tag" --generate-notes
+  printf '\n'
+  exit 0
+fi
+
+gh release create "$tag" "$binary_path" \
+  --title "$tag" \
+  --generate-notes

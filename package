@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$ROOT_DIR/app"
+OUTPUT_DIR="$ROOT_DIR/bundle-output"
+APP_BUNDLE_DIR="$OUTPUT_DIR/mac-arm64"
+APP_NAME="ShowMeHow.app"
+
+version="$(node -p "require('$APP_DIR/package.json').version")"
+zip_path="$OUTPUT_DIR/ShowMeHow-$version-mac-arm64.zip"
+
+npm --prefix "$APP_DIR" run dist
+
+if [[ ! -d "$APP_BUNDLE_DIR/$APP_NAME" ]]; then
+  echo "Expected app bundle was not created at $APP_BUNDLE_DIR/$APP_NAME" >&2
+  exit 1
+fi
+
+rm -f "$zip_path"
+ditto -c -k --sequesterRsrc --keepParent "$APP_BUNDLE_DIR/$APP_NAME" "$zip_path"
+
+echo "$zip_path"

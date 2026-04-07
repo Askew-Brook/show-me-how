@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="$ROOT_DIR/app"
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: ./bump <hotfix|minor|major>" >&2
+  exit 1
+fi
+
+case "$1" in
+  hotfix)
+    bump_type="patch"
+    ;;
+  minor)
+    bump_type="minor"
+    ;;
+  major)
+    bump_type="major"
+    ;;
+  *)
+    echo "Unknown bump type: $1" >&2
+    echo "Usage: ./bump <hotfix|minor|major>" >&2
+    exit 1
+    ;;
+esac
+
+npm --prefix "$APP_DIR" version "$bump_type" --no-git-tag-version
