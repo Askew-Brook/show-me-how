@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('smh', {
   rememberRecentPresentationPath: (filePath: string, projectId?: number | null) =>
     ipcRenderer.invoke('app:rememberRecentPresentationPath', filePath, projectId),
   clearPendingScript: () => ipcRenderer.invoke('app:clearPendingScript'),
+  openPath: (filePath: string, projectRootPath?: string | null) => ipcRenderer.invoke('app:openPath', filePath, projectRootPath),
   onExternalScriptOpened: (callback: (scriptPath: string) => void) => {
     const listener = (_event: unknown, scriptPath: string) => callback(scriptPath)
     ipcRenderer.on('app:externalScriptOpened', listener)

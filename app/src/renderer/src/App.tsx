@@ -5,6 +5,14 @@ import CommandPalette, { type PaletteItem } from './components/CommandPalette'
 import DevModeOverlay from './components/DevModeOverlay'
 import ProjectSelector from './components/ProjectSelector'
 import ScriptEditor from './components/ScriptEditor'
+import {
+  buildReviewExportMarkdown,
+  buildReviewFileTree,
+  extractReviewReferences,
+  formatReviewLineRange,
+  type ReviewComment,
+  type ReviewTreeNode
+} from './lib/review'
 import { registerRemoteControl } from './lib/remoteControl'
 import { badgeClass, buttonClass, iconButtonClass } from './lib/ui'
 import { useAppStore } from './store/appStore'
@@ -42,6 +50,45 @@ function formatMs(ms: number) {
 function flashMessage(setMessage: (value: string) => void, message: string) {
   setMessage(message)
   window.setTimeout(() => setMessage(''), 4000)
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+
+  if (target.isContentEditable || target.closest('[contenteditable="true"]')) {
+    return true
+  }
+
+  return Boolean(
+    target.closest(
+      'input, textarea, select, button, [role="textbox"], .monaco-editor, .monaco-editor * , [data-review-ignore-space="true"]'
+    )
+  )
+}
+
+function formatReviewTimestamp(timestamp: number) {
+  return new Date(timestamp).toLocaleString()
+}
+
+function groupReviewComments(comments: ReviewComment[]) {
+  const groups = new Map<string, ReviewComment[]>()
+
+  for (const comment of comments) {
+    const existing = groups.get(comment.relativePath) || []
+    existing.push(comment)
+    groups.set(comment.relativePath, existing)
+  }
+
+  return Array.from(groups.entries())
+    .sort((left, right) => left[0].localeCompare(right[0]))
+    .map(([relativePath, fileComments]) => ({
+      relativePath,
+      comments: [...fileComments].sort(
+        (left, right) => left.startLine - right.startLine || left.endLine - right.endLine || left.createdAt - right.createdAt
+      )
+    }))
 }
 
 function PlayIcon() {
@@ -190,6 +237,54 @@ function NarrationBar({
   )
 }
 
+function ReviewTree({
+  nodes,
+  selectedPath,
+  onSelect,
+  depth = 0
+}: {
+  nodes: ReviewTreeNode[]
+  selectedPath: string | null
+  onSelect: (path: string) => void
+  depth?: number
+}) {
+  return (
+    <div className="space-y-1">
+      {nodes.map((node) => (
+        <div key={node.id}>
+          {node.type === 'folder' ? (
+            <>
+              <div
+                className="rounded-md px-2 py-1 text-[11px] font-medium uppercase tracking-[0.08em] text-[#b7b0a0]"
+                style={{ paddingLeft: `${8 + depth * 14}px` }}
+              >
+                {node.name}
+              </div>
+              {node.children?.length ? (
+                <ReviewTree nodes={node.children} selectedPath={selectedPath} onSelect={onSelect} depth={depth + 1} />
+              ) : null}
+            </>
+          ) : (
+            <button
+              type="button"
+              className={`block w-full rounded-md px-2 py-1.5 text-left text-[12px] transition-colors ${
+                selectedPath === node.path
+                  ? 'bg-[#2b3028] text-[#eef1f4]'
+                  : 'text-[#c9d0d7] hover:bg-[#23272c] hover:text-[#eef1f4]'
+              }`}
+              style={{ paddingLeft: `${8 + depth * 14}px` }}
+              onClick={() => onSelect(node.path)}
+              data-dev-label="review.summary.tree-file"
+            >
+              {node.name}
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function App() {
   const [presentationMode, setPresentationMode] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -197,6 +292,12 @@ export default function App() {
   const [devMode, setDevMode] = useState(false)
   const [devOutlines, setDevOutlines] = useState(true)
   const [devLastClicked, setDevLastClicked] = useState<string | null>(null)
+  const [reviewPreview, setReviewPreview] = useState<{
+    relativePath: string
+    absolutePath: string
+    content: string
+    exists: boolean
+  } | null>(null)
 
   const {
     bootstrapped,
@@ -218,6 +319,9 @@ export default function App() {
     projects,
     currentProjectId,
     projectSelectorOpen,
+    reviewComments,
+    reviewDraft,
+    reviewSummarySelection,
     bootstrap,
     setScript,
     openScript,
@@ -230,13 +334,23 @@ export default function App() {
     updateProject,
     deleteProject,
     chooseProject,
+    startReviewDraft,
+    startReviewDraftForFile,
+    setReviewDraftBody,
+    saveReviewDraft,
+    cancelReviewDraft,
+    editReviewComment,
+    deleteReviewComment,
+    clearReviewComments,
+    setReviewSummarySelection,
     validate,
     play,
     pause,
     resume,
     restart,
     stop,
-    skipForward
+    skipForward,
+    skipToSummary
   } = useAppStore()
 
   useEffect(() => {
@@ -248,17 +362,55 @@ export default function App() {
     return unsubscribe
   }, [])
 
+  const currentProject = useMemo(
+    () => projects.find((project) => project.id === currentProjectId) || null,
+    [projects, currentProjectId]
+  )
+
+  const orderedPanels = useMemo(() => panelOrder.map((id) => panels[id]).filter(Boolean), [panelOrder, panels])
+  const currentAction = actions[currentActionIndex]
+  const recentLogs = useMemo(() => logs.slice(-8).reverse(), [logs])
+  const reviewReferences = useMemo(() => extractReviewReferences(actions), [actions])
+  const reviewTree = useMemo(() => buildReviewFileTree(reviewReferences.map((reference) => reference.relativePath)), [reviewReferences])
+  const groupedReviewComments = useMemo(() => groupReviewComments(reviewComments), [reviewComments])
+  const preferredReviewSummaryPath =
+    reviewSummarySelection || reviewComments[0]?.relativePath || reviewReferences[0]?.relativePath || null
+  const hasPresentation = presentationMode || status === 'paused' || status === 'playing'
+  const hasErrors = diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+  const issueTone = diagnostics.length === 0 ? 'success' : hasErrors ? 'danger' : 'warning'
+  const playbackTone = status === 'completed' ? 'success' : status === 'error' ? 'danger' : status === 'playing' ? 'warning' : 'neutral'
+  const scriptDisplay = scriptPath ? relativePath(scriptPath, currentProject?.rootPath) : null
+
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPaletteOpen((value) => !value)
+        return
+      }
+
+      if (event.altKey || event.metaKey || event.ctrlKey) {
+        return
+      }
+
+      if (event.code === 'Space' && !isEditableTarget(event.target)) {
+        if (status === 'playing') {
+          event.preventDefault()
+          pause()
+          return
+        }
+
+        if (status === 'paused') {
+          event.preventDefault()
+          setPresentationMode(true)
+          resume()
+        }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [pause, resume, status])
 
   useEffect(() => {
     if (!devMode) {
@@ -279,19 +431,39 @@ export default function App() {
     return () => window.removeEventListener('pointerdown', handlePointerDown, true)
   }, [devMode])
 
-  const currentProject = useMemo(
-    () => projects.find((project) => project.id === currentProjectId) || null,
-    [projects, currentProjectId]
-  )
+  useEffect(() => {
+    if (status !== 'completed' || reviewSummarySelection || !preferredReviewSummaryPath) {
+      return
+    }
 
-  const orderedPanels = useMemo(() => panelOrder.map((id) => panels[id]).filter(Boolean), [panelOrder, panels])
-  const currentAction = actions[currentActionIndex]
-  const recentLogs = useMemo(() => logs.slice(-8).reverse(), [logs])
-  const hasPresentation = presentationMode || orderedPanels.length > 0 || status === 'paused' || status === 'playing'
-  const hasErrors = diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-  const issueTone = diagnostics.length === 0 ? 'success' : hasErrors ? 'danger' : 'warning'
-  const playbackTone = status === 'completed' ? 'success' : status === 'error' ? 'danger' : status === 'playing' ? 'warning' : 'neutral'
-  const scriptDisplay = scriptPath ? relativePath(scriptPath, currentProject?.rootPath) : null
+    setReviewSummarySelection(preferredReviewSummaryPath)
+  }, [preferredReviewSummaryPath, reviewSummarySelection, setReviewSummarySelection, status])
+
+  useEffect(() => {
+    if (status !== 'completed' || !preferredReviewSummaryPath || !currentProject) {
+      setReviewPreview(null)
+      return
+    }
+
+    let cancelled = false
+
+    void window.smh.readTextFile(preferredReviewSummaryPath, currentProject.rootPath).then((file) => {
+      if (cancelled) {
+        return
+      }
+
+      setReviewPreview({
+        relativePath: preferredReviewSummaryPath,
+        absolutePath: file.path,
+        content: file.content,
+        exists: file.exists
+      })
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [currentProject, preferredReviewSummaryPath, status])
 
   async function handleImportProjects() {
     const parentPath = await window.smh.pickFolder()
@@ -337,6 +509,18 @@ export default function App() {
     }
 
     await copyText(devLastClicked, `Copied dev label: ${devLastClicked}`)
+  }
+
+  async function handleCopyReviewMarkdown() {
+    const markdown = buildReviewExportMarkdown({
+      title: meta.title,
+      projectName: currentProject?.name || null,
+      exportedAt: new Date().toLocaleString(),
+      comments: reviewComments,
+      references: reviewReferences
+    })
+
+    await copyText(markdown, reviewComments.length > 0 ? 'Copied review markdown.' : 'Copied review summary.')
   }
 
   async function handleToggleDevMode() {
@@ -537,6 +721,21 @@ export default function App() {
               await handleSkipForward()
             }
           })
+
+          if (status === 'playing' || status === 'paused') {
+            items.push({
+              id: 'playback-summary',
+              title: 'Skip to summary',
+              subtitle: 'End playback and open the review summary',
+              hint: 'Playback',
+              section: 'Playback',
+              symbol: '»',
+              keywords: ['summary', 'finish', 'complete', 'review'],
+              onSelect: () => {
+                handleSkipToSummary()
+              }
+            })
+          }
         }
 
         if (status === 'playing') {
@@ -674,9 +873,241 @@ export default function App() {
     setPresentationMode(false)
   }
 
+  function handleSkipToSummary() {
+    setPresentationMode(true)
+    skipToSummary()
+  }
+
+  function handleBackToWorkspace() {
+    setPresentationMode(false)
+  }
+
   function handleResume() {
     setPresentationMode(true)
     resume()
+  }
+
+  function renderPausedReviewToolbar() {
+    if (status !== 'paused') {
+      return null
+    }
+
+    return (
+      <div
+        className="flex items-center justify-between gap-3 border-b border-[#3f433b] bg-[#1d211d] px-4 py-2 text-[11px] text-[#d2d7d2]"
+        data-dev-label="review.paused-toolbar"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={badgeClass()}>{reviewComments.length} comments</span>
+          {reviewDraft ? (
+            <span className={badgeClass('warning')}>
+              Draft {reviewDraft.relativePath}:{formatReviewLineRange(reviewDraft.startLine, reviewDraft.endLine)}
+            </span>
+          ) : (
+            <span className={subtleTextClass}>Click or drag code lines to add a comment.</span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {reviewDraft ? (
+            <button
+              type="button"
+              className={buttonClass('ghost', 'sm')}
+              onClick={cancelReviewDraft}
+              data-dev-label="review.paused-clear-draft"
+            >
+              Clear draft
+            </button>
+          ) : null}
+          {reviewComments.length > 0 ? (
+            <button
+              type="button"
+              className={buttonClass('ghost', 'sm')}
+              onClick={clearReviewComments}
+              data-dev-label="review.paused-clear-comments"
+            >
+              Clear comments
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={buttonClass('secondary', 'sm')}
+            onClick={() => void handleCopyReviewMarkdown()}
+            data-dev-label="review.export"
+          >
+            Export to clipboard
+          </button>
+          <button
+            type="button"
+            className={buttonClass('primary', 'sm')}
+            onClick={handleResume}
+            data-dev-label="review.paused-resume"
+          >
+            Resume
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  function renderFinishedSummary() {
+    const selectedFileComments = preferredReviewSummaryPath
+      ? reviewComments.filter((comment) => comment.relativePath === preferredReviewSummaryPath)
+      : []
+    const selectedReference = preferredReviewSummaryPath
+      ? reviewReferences.find((reference) => reference.relativePath === preferredReviewSummaryPath) || null
+      : null
+    const previewPanel =
+      reviewPreview && reviewPreview.exists
+        ? {
+            id: 'review-summary-preview',
+            type: 'code' as const,
+            visible: true,
+            focused: true,
+            filePath: reviewPreview.absolutePath,
+            content: reviewPreview.content,
+            currentLine: selectedFileComments[0]?.startLine || selectedReference?.ranges[0]?.startLine
+          }
+        : null
+
+    return (
+      <main className="min-h-0 flex-1 overflow-hidden p-3" data-dev-label="review.summary.shell">
+        <div className="grid h-full min-h-0 gap-3 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="flex min-h-0 flex-col gap-3">
+            <section className={`${surfaceClass} p-4`} data-dev-label="review.summary.empty-state">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#c8b07e]">Walkthrough complete</div>
+              <div className={`mt-2 text-[12px] ${subtleTextClass}`}>Add comments or copy the review.</div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={buttonClass('primary', 'sm')}
+                  onClick={() => void handleCopyReviewMarkdown()}
+                  data-dev-label="review.summary.export"
+                >
+                  Copy review markdown
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass('secondary', 'sm')}
+                  onClick={() => void handleRestart()}
+                  data-dev-label="review.summary.restart"
+                >
+                  Restart walkthrough
+                </button>
+                <button
+                  type="button"
+                  className={buttonClass('ghost', 'sm')}
+                  onClick={handleBackToWorkspace}
+                  data-dev-label="review.summary.workspace"
+                >
+                  Back to workspace
+                </button>
+              </div>
+            </section>
+
+            <section className={`${surfaceClass} flex min-h-0 flex-col p-3`} data-dev-label="review.summary.comments">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="text-xs font-medium text-[#f4f6f8]">Comments</h3>
+                <span className={badgeClass()}>{reviewComments.length}</span>
+              </div>
+              <div className="max-h-[32vh] flex-1 space-y-3 overflow-auto pr-1">
+                {groupedReviewComments.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-[#3d4249] bg-[#1b1e22] p-3 text-[12px] text-[#8b929c]">
+                    No review comments captured.
+                  </div>
+                ) : (
+                  groupedReviewComments.map((group) => (
+                    <div key={group.relativePath} className="rounded-md border border-[#34383e] bg-[#1b1e22] p-3">
+                      <button
+                        type="button"
+                        className="block w-full truncate text-left text-[12px] font-medium text-[#eef1f4] hover:text-[#ffffff]"
+                        onClick={() => setReviewSummarySelection(group.relativePath)}
+                        title={group.relativePath}
+                      >
+                        {group.relativePath}
+                      </button>
+                      <div className="mt-2 space-y-2">
+                        {group.comments.map((comment) => (
+                          <div key={comment.id} className="rounded-md border border-[#34383e] bg-[#202327] p-2.5 text-[12px]">
+                            <div className="flex items-center justify-between gap-3 text-[#bfc5cf]">
+                              <span className="min-w-0 truncate">{formatReviewLineRange(comment.startLine, comment.endLine)}</span>
+                              <span className={`${subtleTextClass} shrink-0`}>{formatReviewTimestamp(comment.updatedAt)}</span>
+                            </div>
+                            <div className="mt-1 whitespace-pre-wrap break-words text-[#eef1f4]">{comment.body}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+          </div>
+
+          <div className="grid h-full min-h-0 gap-3 lg:grid-cols-[260px_minmax(0,1fr)]">
+            <section className={`${surfaceClass} flex min-h-0 flex-col p-3`} data-dev-label="review.summary.tree">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="text-xs font-medium text-[#f4f6f8]">Code references</h3>
+                <span className={badgeClass()}>{reviewReferences.length}</span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto pr-1">
+                {reviewTree.length === 0 ? (
+                  <div className="rounded-md border border-dashed border-[#3d4249] bg-[#1b1e22] p-3 text-[12px] text-[#8b929c]">
+                    No code references recorded.
+                  </div>
+                ) : (
+                  <ReviewTree nodes={reviewTree} selectedPath={preferredReviewSummaryPath} onSelect={setReviewSummarySelection} />
+                )}
+              </div>
+            </section>
+
+            <section className={`${surfaceClass} flex min-h-0 flex-col overflow-hidden p-3`} data-dev-label="review.summary.preview">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-xs font-medium text-[#f4f6f8]">Preview</h3>
+                  <div className={`text-[11px] ${subtleTextClass}`}>{preferredReviewSummaryPath || 'Choose a referenced file'}</div>
+                </div>
+                {selectedReference ? <span className={badgeClass()}>{selectedReference.ranges.length} refs</span> : null}
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-[#34383e] bg-[#17181b]">
+                {previewPanel ? (
+                  <CodePanel
+                    panel={previewPanel}
+                    projectRootPath={currentProject?.rootPath}
+                    interactive={Boolean(reviewPreview?.exists && preferredReviewSummaryPath)}
+                    reviewComments={selectedFileComments}
+                    reviewDraft={reviewDraft}
+                    onSelectRange={(selection) => {
+                      if (!reviewPreview || !preferredReviewSummaryPath) {
+                        return
+                      }
+
+                      startReviewDraftForFile({
+                        panelId: previewPanel.id,
+                        absolutePath: reviewPreview.absolutePath,
+                        relativePath: preferredReviewSummaryPath,
+                        startLine: selection.startLine,
+                        endLine: selection.endLine
+                      })
+                    }}
+                    onChangeDraftBody={setReviewDraftBody}
+                    onSaveDraft={saveReviewDraft}
+                    onCancelDraft={cancelReviewDraft}
+                    onEditComment={editReviewComment}
+                    onDeleteComment={deleteReviewComment}
+                  />
+                ) : (
+                  <div className="flex h-full min-h-[280px] items-center justify-center p-6 text-center text-[12px] text-[#8b929c]">
+                    {preferredReviewSummaryPath ? 'Unable to load the selected file preview.' : 'Choose a file from the reference list.'}
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      </main>
+    )
   }
 
   function renderDevHud() {
@@ -754,6 +1185,16 @@ export default function App() {
                     <PlayIcon />
                   </IconButton>
                 )}
+                {(status === 'playing' || status === 'paused') && (
+                  <button
+                    type="button"
+                    className={buttonClass('ghost', 'sm')}
+                    onClick={handleSkipToSummary}
+                    data-dev-label="presentation.summary"
+                  >
+                    Summary
+                  </button>
+                )}
                 <IconButton title="Restart" onClick={() => void handleRestart()} variant="secondary" devLabel="presentation.restart">
                   <RestartIcon />
                 </IconButton>
@@ -769,44 +1210,68 @@ export default function App() {
             </div>
           </header>
 
-          <NarrationBar tts={tts} onPause={pause} onResume={handleResume} onVolumeChange={setTtsVolume} />
+          {renderPausedReviewToolbar()}
 
-          <main className="min-h-0 flex-1 p-3" data-dev-label="presentation.canvas">
-            <div
-              className={`grid h-full min-h-0 gap-3 ${layoutMode === 'single' ? 'grid-cols-1' : 'grid-cols-2'} ${
-                layoutMode === 'grid' ? 'auto-rows-fr' : ''
-              }`}
-            >
-              {orderedPanels.map((panel) => (
-                <div
-                  key={panel.id}
-                  className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border ${
-                    panel.focused ? 'border-[#627591]' : 'border-[#34383e]'
-                  } bg-[#202327]`}
-                >
-                  <div className="flex items-center justify-between border-b border-[#34383e] px-3 py-1.5 text-[11px] text-[#c9d0d7]">
-                    <span className="truncate">{panel.filePath ? relativePath(panel.filePath, currentProject?.rootPath) : `${panel.id} · ${panel.type}`}</span>
-                    <span className={panel.focused ? 'text-[#b9c8dc]' : subtleTextClass}>{panel.focused ? 'Focused' : panel.type}</span>
-                  </div>
-                  <div className="min-h-0 flex-1">
-                    {panel.type === 'code' ? (
-                      <CodePanel panel={panel} />
-                    ) : (
-                      <div className="flex h-full items-center justify-center text-sm text-[#8b929c]">
-                        Browser panels are disabled in this prototype.
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
+          {fileMessage ? (
+            <div className="border-b border-[#5a4637] bg-[#232933] px-4 py-1.5 text-[11px] text-[#d5dfed]">{fileMessage}</div>
+          ) : null}
 
-              {orderedPanels.length === 0 ? (
-                <div className="flex min-h-0 items-center justify-center rounded-md border border-dashed border-[#34383e] bg-[#202327] text-sm text-[#8b929c]">
-                  Run a script to open code panels.
-                </div>
-              ) : null}
-            </div>
-          </main>
+          {status !== 'completed' ? <NarrationBar tts={tts} onPause={pause} onResume={handleResume} onVolumeChange={setTtsVolume} /> : null}
+
+          {status === 'completed' ? (
+            renderFinishedSummary()
+          ) : (
+            <main className="min-h-0 flex-1 p-3" data-dev-label="presentation.canvas">
+              <div
+                className={`grid h-full min-h-0 gap-3 ${layoutMode === 'single' ? 'grid-cols-1' : 'grid-cols-2'} ${
+                  layoutMode === 'grid' ? 'auto-rows-fr' : ''
+                }`}
+              >
+                {orderedPanels.map((panel) => (
+                  <div
+                    key={panel.id}
+                    className={`flex min-h-0 min-w-0 flex-col overflow-hidden rounded-md border ${
+                      panel.focused ? 'border-[#627591]' : 'border-[#34383e]'
+                    } bg-[#202327]`}
+                  >
+                    <div className="flex items-center justify-between border-b border-[#34383e] px-3 py-1.5 text-[11px] text-[#c9d0d7]">
+                      <span className="truncate">
+                        {panel.filePath ? relativePath(panel.filePath, currentProject?.rootPath) : `${panel.id} · ${panel.type}`}
+                      </span>
+                      <span className={panel.focused ? 'text-[#b9c8dc]' : subtleTextClass}>{panel.focused ? 'Focused' : panel.type}</span>
+                    </div>
+                    <div className="min-h-0 flex-1">
+                      {panel.type === 'code' ? (
+                        <CodePanel
+                          panel={panel}
+                          projectRootPath={currentProject?.rootPath}
+                          interactive={status === 'paused'}
+                          reviewComments={reviewComments.filter((comment) => comment.absolutePath === panel.filePath)}
+                          reviewDraft={reviewDraft}
+                          onSelectRange={(selection) => startReviewDraft(panel.id, selection)}
+                          onChangeDraftBody={setReviewDraftBody}
+                          onSaveDraft={saveReviewDraft}
+                          onCancelDraft={cancelReviewDraft}
+                          onEditComment={editReviewComment}
+                          onDeleteComment={deleteReviewComment}
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center text-sm text-[#8b929c]">
+                          Browser panels are disabled in this prototype.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {orderedPanels.length === 0 ? (
+                  <div className="flex min-h-0 items-center justify-center rounded-md border border-dashed border-[#34383e] bg-[#202327] text-sm text-[#8b929c]">
+                    Run a script to open code panels.
+                  </div>
+                ) : null}
+              </div>
+            </main>
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col" data-dev-label="workspace.shell">

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import http from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
@@ -899,6 +899,15 @@ ipcMain.handle('app:rememberRecentPresentationPath', async (_event, filePath: st
 
 ipcMain.handle('app:clearPendingScript', async () => {
   pendingScriptPath = null
+})
+
+ipcMain.handle('app:openPath', async (_event, filePath: string, projectRootPath?: string | null) => {
+  const resolvedPath = resolveScriptPath(filePath, projectRootPath)
+  const errorMessage = await shell.openPath(resolvedPath)
+  return {
+    ok: errorMessage === '',
+    error: errorMessage || null
+  }
 })
 
 ipcMain.handle('fs:resolvePath', async (_event, filePath: string, projectRootPath?: string | null) => {

@@ -36,6 +36,7 @@ declare global {
       getRecentPresentationPaths: () => Promise<RecentPresentationEntry[]>
       rememberRecentPresentationPath: (filePath: string, projectId?: number | null) => Promise<RecentPresentationEntry[]>
       clearPendingScript: () => Promise<void>
+      openPath: (filePath: string, projectRootPath?: string | null) => Promise<{ ok: boolean; error: string | null }>
       onExternalScriptOpened: (callback: (scriptPath: string) => void) => () => void
       onControlCommand: (callback: (payload: { id: string; command: Record<string, unknown> }) => void) => () => void
       respondToControlCommand: (payload: { id: string; ok: boolean; result?: unknown; error?: string }) => void

@@ -11,6 +11,7 @@ import {
   type PanelType,
   validateDocument
 } from '../lib/parser'
+import { type ReviewComment, type ReviewDraft, normalizeReviewRange } from '../lib/review'
 
 export interface PrototypePanel {
   id: string
@@ -81,6 +82,9 @@ interface AppState {
   projects: ProjectRecord[]
   currentProjectId: number | null
   projectSelectorOpen: boolean
+  reviewComments: ReviewComment[]
+  reviewDraft: ReviewDraft | null
+  reviewSummarySelection: string | null
   bootstrap: () => Promise<void>
   setScript: (script: string) => void
   openScript: () => Promise<string | null>
@@ -96,6 +100,26 @@ interface AppState {
   updateProject: (projectId: number, input: ProjectInput) => Promise<void>
   deleteProject: (projectId: number) => Promise<void>
   chooseProject: (projectId: number) => Promise<void>
+  startReviewDraft: (
+    panelId: string,
+    selection: { startLine: number; endLine: number; startColumn?: number; endColumn?: number }
+  ) => void
+  startReviewDraftForFile: (input: {
+    panelId: string
+    absolutePath: string
+    relativePath: string
+    startLine: number
+    endLine: number
+    startColumn?: number
+    endColumn?: number
+  }) => void
+  setReviewDraftBody: (body: string) => void
+  saveReviewDraft: () => void
+  cancelReviewDraft: () => void
+  editReviewComment: (commentId: string) => void
+  deleteReviewComment: (commentId: string) => void
+  clearReviewComments: () => void
+  setReviewSummarySelection: (relativePath: string | null) => void
   validate: () => Promise<boolean>
   play: () => Promise<void>
   pause: () => void
@@ -104,6 +128,7 @@ interface AppState {
   stop: () => void
   nextStep: () => Promise<void>
   skipForward: () => Promise<void>
+  skipToSummary: () => void
 }
 
 type StoreSet = StoreApi<AppState>['setState']
@@ -169,6 +194,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   currentProjectId: null,
   projectSelectorOpen: true,
+  reviewComments: [],
+  reviewDraft: null,
+  reviewSummarySelection: null,
 
   bootstrap: async () => {
     const [config, recentPresentationPaths, normalizedBootState] = await Promise.all([
@@ -235,7 +263,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       panelOrder: [],
       logs: [],
       layoutMode: 'two-column',
-      tts: createDefaultTtsState(state.tts)
+      tts: createDefaultTtsState(state.tts),
+      ...clearReviewState()
     }))
   },
 
@@ -266,7 +295,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       panelOrder: [],
       actionStatuses: {},
       currentActionIndex: 0,
-      tts: createDefaultTtsState(get().tts)
+      tts: createDefaultTtsState(get().tts),
+      ...clearReviewState()
     })
   },
 
@@ -334,7 +364,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       panelOrder: [],
       logs: [],
       layoutMode: 'two-column',
-      tts: createDefaultTtsState(get().tts)
+      tts: createDefaultTtsState(get().tts),
+      ...clearReviewState()
     })
   },
 
@@ -394,6 +425,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       logs: [],
       layoutMode: 'two-column',
       tts: createDefaultTtsState(state.tts),
+      ...clearReviewState(),
       projects: state.projects.map((item) => (item.id === project.id ? project : item)).sort(compareProjects)
     }))
 
@@ -401,6 +433,142 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (pendingScriptPath && valid) {
       await get().play()
     }
+  },
+
+  startReviewDraft: (panelId, selection) => {
+    const panel = get().panels[panelId]
+    const currentProject = currentProjectFor(get)
+    const absolutePath = panel?.filePath
+    if (!absolutePath) {
+      return
+    }
+
+    setReviewDraftState(set, {
+      panelId,
+      absolutePath,
+      relativePath: relativePath(absolutePath, currentProject?.rootPath),
+      startLine: selection.startLine,
+      endLine: selection.endLine,
+      startColumn: selection.startColumn,
+      endColumn: selection.endColumn
+    })
+  },
+
+  startReviewDraftForFile: (input) => {
+    setReviewDraftState(set, input)
+  },
+
+  setReviewDraftBody: (body) =>
+    set((state: AppState) => ({
+      reviewDraft: state.reviewDraft
+        ? {
+            ...state.reviewDraft,
+            body
+          }
+        : null
+    })),
+
+  saveReviewDraft: () => {
+    const draft = get().reviewDraft
+    if (!draft) {
+      return
+    }
+
+    const body = draft.body.trim()
+    if (!body) {
+      set({ reviewDraft: null })
+      return
+    }
+
+    const now = Date.now()
+
+    set((state: AppState) => {
+      if (!state.reviewDraft) {
+        return state
+      }
+
+      if (state.reviewDraft.commentId) {
+        return {
+          reviewComments: state.reviewComments.map((comment) =>
+            comment.id === state.reviewDraft?.commentId
+              ? {
+                  ...comment,
+                  panelId: state.reviewDraft.panelId,
+                  absolutePath: state.reviewDraft.absolutePath,
+                  relativePath: state.reviewDraft.relativePath,
+                  startLine: state.reviewDraft.startLine,
+                  endLine: state.reviewDraft.endLine,
+                  startColumn: state.reviewDraft.startColumn,
+                  endColumn: state.reviewDraft.endColumn,
+                  body,
+                  updatedAt: now
+                }
+              : comment
+          ),
+          reviewDraft: null,
+          reviewSummarySelection: state.reviewDraft.relativePath
+        }
+      }
+
+      return {
+        reviewComments: [
+          ...state.reviewComments,
+          {
+            id: createReviewCommentId(),
+            panelId: state.reviewDraft.panelId,
+            absolutePath: state.reviewDraft.absolutePath,
+            relativePath: state.reviewDraft.relativePath,
+            startLine: state.reviewDraft.startLine,
+            endLine: state.reviewDraft.endLine,
+            startColumn: state.reviewDraft.startColumn,
+            endColumn: state.reviewDraft.endColumn,
+            body,
+            createdAt: now,
+            updatedAt: now
+          }
+        ],
+        reviewDraft: null,
+        reviewSummarySelection: state.reviewDraft.relativePath
+      }
+    })
+  },
+
+  cancelReviewDraft: () => {
+    set({ reviewDraft: null })
+  },
+
+  editReviewComment: (commentId) => {
+    const comment = get().reviewComments.find((entry) => entry.id === commentId)
+    if (!comment) {
+      return
+    }
+
+    set({
+      reviewDraft: {
+        commentId: comment.id,
+        panelId: get().status === 'completed' ? 'review-summary-preview' : comment.panelId,
+        absolutePath: comment.absolutePath,
+        relativePath: comment.relativePath,
+        startLine: comment.startLine,
+        endLine: comment.endLine,
+        startColumn: comment.startColumn,
+        endColumn: comment.endColumn,
+        body: comment.body
+      },
+      reviewSummarySelection: comment.relativePath
+    })
+  },
+
+  deleteReviewComment: (commentId) =>
+    set((state: AppState) => ({
+      reviewComments: state.reviewComments.filter((comment) => comment.id !== commentId),
+      reviewDraft: state.reviewDraft?.commentId === commentId ? null : state.reviewDraft
+    })),
+
+  clearReviewComments: () => set(clearReviewState()),
+
+  setReviewSummarySelection: (relativePathValue) => {
+    set({ reviewSummarySelection: relativePathValue })
   },
 
   validate: async () => {
@@ -560,6 +728,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     await get().nextStep()
+  },
+
+  skipToSummary: () => {
+    if (!ensureProjectSelected(set, get)) return
+
+    const { actions, currentActionIndex, status } = get()
+    if (status === 'completed') {
+      return
+    }
+
+    activeRunId += 1
+    clearSkipQueue()
+    activeTtsSession?.stop()
+
+    set((state: AppState) => ({
+      status: 'completed',
+      currentActionIndex: actions.length,
+      actionStatuses: Object.fromEntries(
+        actions.map((action, index) => {
+          const existing = state.actionStatuses[action.id] || 'pending'
+          if (existing === 'done' || existing === 'failed') {
+            return [action.id, existing]
+          }
+
+          return [action.id, index >= currentActionIndex ? 'skipped' : existing]
+        })
+      ),
+      tts: createDefaultTtsState(state.tts)
+    }))
+
+    pushLog(set, 'info', 'Skipped to summary')
   }
 }))
 
@@ -649,6 +848,66 @@ function basename(filePath: string) {
   return filePath.split(/[\\/]/).pop() || filePath
 }
 
+function relativePath(filePath: string, rootPath?: string | null) {
+  if (!rootPath) return filePath
+  const normalizedRoot = rootPath.endsWith('/') ? rootPath : `${rootPath}/`
+  return filePath.startsWith(normalizedRoot) ? filePath.slice(normalizedRoot.length) : filePath
+}
+
+function clearReviewState() {
+  return {
+    reviewComments: [] as ReviewComment[],
+    reviewDraft: null as ReviewDraft | null,
+    reviewSummarySelection: null as string | null
+  }
+}
+
+function createReviewCommentId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `review-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function setReviewDraftState(
+  set: StoreSet,
+  input: {
+    panelId: string
+    absolutePath: string
+    relativePath: string
+    startLine: number
+    endLine: number
+    startColumn?: number
+    endColumn?: number
+  }
+) {
+  const range = normalizeReviewRange(input.startLine, input.endLine)
+
+  set((state: AppState) => {
+    const preserveBody =
+      state.reviewDraft &&
+      !state.reviewDraft.commentId &&
+      state.reviewDraft.panelId === input.panelId &&
+      state.reviewDraft.absolutePath === input.absolutePath
+        ? state.reviewDraft.body
+        : ''
+
+    return {
+      reviewDraft: {
+        panelId: input.panelId,
+        absolutePath: input.absolutePath,
+        relativePath: input.relativePath,
+        startLine: range.startLine,
+        endLine: range.endLine,
+        startColumn: input.startColumn,
+        endColumn: input.endColumn,
+        body: preserveBody
+      }
+    }
+  })
+}
+
 function currentProjectFor(get: StoreGet) {
   const state = get()
   return state.projects.find((project) => project.id === state.currentProjectId) || null
@@ -720,6 +979,7 @@ async function openRecentPresentationEntry(entry: RecentPresentationEntry, set: 
     logs: [],
     layoutMode: validation.meta.startLayout || 'two-column',
     tts: createDefaultTtsState(state.tts),
+    ...clearReviewState(),
     projects: state.projects.map((item) => (item.id === project.id ? project : item)).sort(compareProjects)
   }))
 
@@ -782,7 +1042,8 @@ async function openPresentationScript(
     panelOrder: [],
     logs: [],
     layoutMode: 'two-column',
-    tts: createDefaultTtsState(state.tts)
+    tts: createDefaultTtsState(state.tts),
+    ...clearReviewState()
   }))
 
   if (hasProject) {
@@ -885,7 +1146,8 @@ function resetRuntime(set: StoreSet, get: StoreGet) {
     panelOrder: [],
     logs: [],
     layoutMode: get().meta.startLayout || 'two-column',
-    tts: createDefaultTtsState(get().tts)
+    tts: createDefaultTtsState(get().tts),
+    ...clearReviewState()
   })
 }
 
