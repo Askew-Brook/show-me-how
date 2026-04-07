@@ -19,7 +19,6 @@ import { useAppStore } from './store/appStore'
 
 const appFrameClass = 'flex h-full flex-col bg-[#17181b] text-[#eef1f4]'
 const surfaceClass = 'rounded-md border border-[#34383e] bg-[#202327]'
-const raisedSurfaceClass = 'rounded-md border border-[#34383e] bg-[#202327]'
 const mutedTextClass = 'text-[#a7adb6]'
 const subtleTextClass = 'text-[#8b929c]'
 
@@ -293,7 +292,6 @@ export default function App() {
   const [devOutlines, setDevOutlines] = useState(true)
   const [devLastClicked, setDevLastClicked] = useState<string | null>(null)
   const [reviewPreview, setReviewPreview] = useState<{
-    relativePath: string
     absolutePath: string
     content: string
     exists: boolean
@@ -453,7 +451,6 @@ export default function App() {
       }
 
       setReviewPreview({
-        relativePath: preferredReviewSummaryPath,
         absolutePath: file.path,
         content: file.content,
         exists: file.exists
@@ -777,7 +774,7 @@ export default function App() {
             id: `recent-${entry.path}`,
             title: basename(entry.path),
             subtitle: rememberedProject ? `${rememberedProject.name} · ${parentPath(entry.path)}` : parentPath(entry.path),
-            hint: rememberedProject ? 'Recent' : 'Recent',
+            hint: 'Recent',
             section: 'Recent scripts',
             symbol: rememberedProject ? '↺' : '.smh',
             keywords: [entry.path, basename(entry.path), rememberedProject?.name || '', 'recent', 'smh'],
@@ -818,7 +815,6 @@ export default function App() {
       diagnostics.length,
       hasPresentation,
       openRecentPresentation,
-      orderedPanels.length,
       pause,
       projects,
       recentPresentationPaths,
@@ -1348,7 +1344,7 @@ export default function App() {
 
           <main className="flex min-h-0 flex-1 flex-col">
             <div className="min-h-0 flex-1 p-3" data-dev-label="workspace.editor-region">
-              <div className={`${raisedSurfaceClass} flex h-full min-h-0 flex-col overflow-hidden`} data-dev-label="workspace.script-editor">
+              <div className={`${surfaceClass} flex h-full min-h-0 flex-col overflow-hidden`} data-dev-label="workspace.script-editor">
                 <div className="flex items-center justify-between border-b border-[#34383e] px-3 py-1.5 text-[11px] text-[#c9d0d7]">
                   <span className="font-medium text-[#eef1f4]">Script</span>
                   {scriptDisplay ? <span className={subtleTextClass}>{scriptDisplay}</span> : null}

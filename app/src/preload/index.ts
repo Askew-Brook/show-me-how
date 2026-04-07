@@ -10,7 +10,6 @@ contextBridge.exposeInMainWorld('smh', {
     ipcRenderer.invoke('fs:fileExists', filePath, projectRootPath),
   resolvePath: (filePath: string, projectRootPath?: string | null) =>
     ipcRenderer.invoke('fs:resolvePath', filePath, projectRootPath),
-  getConfig: () => ipcRenderer.invoke('app:getConfig'),
   synthesizeSpeechToFile: (text: string, options?: { voice?: string | null; rate?: number | null }) =>
     ipcRenderer.invoke('tts:synthesizeToFile', text, options),
   primeTtsCache: (requests: Array<{ text: string; voice?: string | null; rate?: number | null }>) =>

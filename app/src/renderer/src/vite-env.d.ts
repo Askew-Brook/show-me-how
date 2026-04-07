@@ -18,7 +18,6 @@ declare global {
       ) => Promise<{ path: string; content: string; exists: boolean }>
       fileExists: (filePath: string, projectRootPath?: string | null) => Promise<boolean>
       resolvePath: (filePath: string, projectRootPath?: string | null) => Promise<string>
-      getConfig: () => Promise<{ defaultBrowserTimeoutMs: number; defaultNavigationTimeoutMs: number; controlUrl: string }>
       synthesizeSpeechToFile: (
         text: string,
         options?: { voice?: string | null; rate?: number | null }

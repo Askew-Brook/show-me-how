@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -950,16 +950,6 @@ ipcMain.handle(
 
 ipcMain.handle('tts:primeCache', async (_event, requests: TtsCacheRequest[]) => {
   return warmTtsCache(requests)
-})
-
-ipcMain.handle('app:getConfig', async () => {
-  await mkdir(app.getPath('userData'), { recursive: true })
-
-  return {
-    defaultBrowserTimeoutMs: 5000,
-    defaultNavigationTimeoutMs: 10000,
-    controlUrl: `http://${controlHost}:${controlPort}`
-  }
 })
 
 app.on('open-file', (event, filePath) => {

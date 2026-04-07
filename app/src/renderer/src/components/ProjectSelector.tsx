@@ -13,7 +13,7 @@ interface ProjectSelectorProps {
   onDelete: (projectId: number) => Promise<void>
 }
 
-const pageClass = 'flex h-full flex-col bg-[#17181b] text-[#eef1f4]'
+const pageClass = 'flex h-full min-h-0 flex-col overflow-hidden bg-[#17181b] text-[#eef1f4]'
 const panelClass = 'rounded-md border border-[#34383e] bg-[#202327]'
 const rowClass = 'rounded-md border border-[#34383e] bg-[#1b1e22]'
 const fieldLabelClass = 'mb-1 block text-xs text-[#a7adb6]'
@@ -126,7 +126,7 @@ export default function ProjectSelector({
   if (pendingScriptPath) {
     return (
       <div className={pageClass}>
-        <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col px-5 py-8">
+        <div className="mx-auto flex w-full max-w-4xl min-h-0 flex-1 flex-col overflow-hidden px-5 py-8">
           <header className="mb-6" data-dev-label="project-selector.brand">
             <div className="mb-3 flex items-center gap-3">
               <img src={showMeHowIcon} alt="ShowMeHow" className="h-11 w-11 rounded-2xl shadow-[0_16px_40px_rgba(0,0,0,0.35)]" />
@@ -141,8 +141,8 @@ export default function ProjectSelector({
             </div>
           </header>
 
-          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-            <section className={`${panelClass} min-h-0 p-3`}>
+          <div className="grid min-h-0 flex-1 gap-5 overflow-hidden lg:grid-cols-[1fr_320px]">
+            <section className={`${panelClass} flex min-h-0 flex-col overflow-hidden p-3`}>
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-medium text-[#f4f6f8]">Saved projects</div>
@@ -151,7 +151,7 @@ export default function ProjectSelector({
                 <span className={badgeClass()}>{projects.length}</span>
               </div>
 
-              <div className="space-y-2 overflow-auto">
+              <div className="min-h-0 flex-1 space-y-2 overflow-auto pr-1">
                 {projects.map((project) => (
                   <button
                     key={project.id}
@@ -188,7 +188,7 @@ export default function ProjectSelector({
               </div>
             </section>
 
-            <aside className={`${panelClass} p-4`}>
+            <aside className={`${panelClass} overflow-auto p-4`}>
               <div className="mb-1 text-sm font-medium text-[#f4f6f8]">New project</div>
               <div className={`mb-4 ${helperTextClass}`}>Add one manually or import a parent folder of repos.</div>
 
@@ -242,7 +242,7 @@ export default function ProjectSelector({
 
   return (
     <div className={pageClass}>
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 py-5">
+      <div className="mx-auto flex w-full max-w-6xl min-h-0 flex-1 flex-col overflow-hidden px-5 py-5">
         <header className="mb-5 border-b border-[#34383e] pb-4" data-dev-label="project-selector.brand">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-center gap-3">
@@ -262,7 +262,7 @@ export default function ProjectSelector({
         </header>
 
         <div className="grid min-h-0 flex-1 gap-5 lg:grid-cols-[320px_1fr]">
-          <section className={`${panelClass} p-4`}>
+          <section className={`${panelClass} overflow-auto p-4`}>
             <div className="mb-1 text-sm font-medium text-[#f4f6f8]">Add project</div>
             <div className={`mb-4 ${helperTextClass}`}>Store the project name and root folder only.</div>
 
@@ -307,7 +307,7 @@ export default function ProjectSelector({
             </div>
           </section>
 
-          <section className={`${panelClass} min-h-0 p-4`}>
+          <section className={`${panelClass} flex min-h-0 flex-col overflow-hidden p-4`}>
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-medium text-[#f4f6f8]">Saved projects</div>
@@ -316,7 +316,7 @@ export default function ProjectSelector({
               <span className={badgeClass()}>{projects.length} saved</span>
             </div>
 
-            <div className="space-y-3 overflow-auto">
+            <div className="min-h-0 flex-1 space-y-3 overflow-auto pr-1">
               {projects.map((project) => {
                 const draft = drafts[project.id] || {
                   name: project.name,

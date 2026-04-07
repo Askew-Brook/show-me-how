@@ -39,11 +39,6 @@ interface RuntimeLogEntry {
   actionId?: string
 }
 
-interface AppConfig {
-  defaultBrowserTimeoutMs: number
-  defaultNavigationTimeoutMs: number
-}
-
 interface TtsCacheRequest {
   text: string
   voice?: string | null
@@ -57,7 +52,6 @@ interface TtsPlaybackState {
   progressMs: number
   durationMs: number
   volume: number
-  rateMultiplier: number
 }
 
 interface AppState {
@@ -75,10 +69,8 @@ interface AppState {
   panelOrder: string[]
   layoutMode: LayoutMode
   logs: RuntimeLogEntry[]
-  muteTts: boolean
   recentPresentationPaths: RecentPresentationEntry[]
   tts: TtsPlaybackState
-  config: AppConfig
   projects: ProjectRecord[]
   currentProjectId: number | null
   projectSelectorOpen: boolean
@@ -90,11 +82,8 @@ interface AppState {
   openScript: () => Promise<string | null>
   openRecentPresentation: (entry: RecentPresentationEntry) => Promise<void>
   clearCurrentScript: () => void
-  setMuteTts: (mute: boolean) => void
   setTtsVolume: (volume: number) => void
-  setTtsRateMultiplier: (rateMultiplier: number) => void
   openProjectSelector: () => Promise<void>
-  closeProjectSelector: () => void
   createProject: (input: ProjectInput) => Promise<ProjectRecord>
   importProjectsFromParent: (parentPath: string) => Promise<ProjectImportResult>
   updateProject: (projectId: number, input: ProjectInput) => Promise<void>
@@ -134,11 +123,6 @@ interface AppState {
 type StoreSet = StoreApi<AppState>['setState']
 type StoreGet = StoreApi<AppState>['getState']
 
-const defaultConfig: AppConfig = {
-  defaultBrowserTimeoutMs: 5000,
-  defaultNavigationTimeoutMs: 10000
-}
-
 function createDefaultTtsState(previous?: TtsPlaybackState): TtsPlaybackState {
   return {
     runId: null,
@@ -146,8 +130,7 @@ function createDefaultTtsState(previous?: TtsPlaybackState): TtsPlaybackState {
     status: 'idle',
     progressMs: 0,
     durationMs: 0,
-    volume: previous?.volume ?? 1,
-    rateMultiplier: previous?.rateMultiplier ?? 1
+    volume: previous?.volume ?? 1
   }
 }
 
@@ -187,10 +170,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   panelOrder: [],
   layoutMode: 'two-column',
   logs: [],
-  muteTts: false,
   recentPresentationPaths: [],
   tts: createDefaultTtsState(),
-  config: defaultConfig,
   projects: [],
   currentProjectId: null,
   projectSelectorOpen: true,
@@ -199,8 +180,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reviewSummarySelection: null,
 
   bootstrap: async () => {
-    const [config, recentPresentationPaths, normalizedBootState] = await Promise.all([
-      window.smh.getConfig(),
+    const [recentPresentationPaths, normalizedBootState] = await Promise.all([
       window.smh.getRecentPresentationPaths(),
       window.smh.clearCurrentProject()
     ])
@@ -209,7 +189,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set({
       bootstrapped: true,
-      config,
       projects: normalizedBootState.projects,
       currentProjectId: normalizedBootState.currentProjectId,
       pendingScriptPath: normalizedBootState.pendingScriptPath,
@@ -268,19 +247,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }))
   },
 
-  setMuteTts: (muteTts) => set({ muteTts }),
   setTtsVolume: (volume) =>
     set((state: AppState) => ({
       tts: {
         ...state.tts,
         volume: Math.max(0, Math.min(1, volume))
-      }
-    })),
-  setTtsRateMultiplier: (rateMultiplier) =>
-    set((state: AppState) => ({
-      tts: {
-        ...state.tts,
-        rateMultiplier: Math.max(0.5, Math.min(2, rateMultiplier))
       }
     })),
 
@@ -298,12 +269,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       tts: createDefaultTtsState(get().tts),
       ...clearReviewState()
     })
-  },
-
-  closeProjectSelector: () => {
-    if (get().pendingScriptPath) return
-    if (!currentProjectFor(get)) return
-    set({ projectSelectorOpen: false })
   },
 
   createProject: async (input) => {
@@ -1313,7 +1278,7 @@ async function executeAction(action: ParsedAction, set: StoreSet, get: StoreGet,
 
     case 'tts': {
       const [text] = action.args as [string]
-      await speakText(text, get().muteTts, get().meta.rate, set, get, runId, action.id)
+      await speakText(text, get().meta.rate, set, get, runId, action.id)
       pushLog(set, 'info', 'TTS completed', action.id)
       return
     }
@@ -1459,18 +1424,12 @@ function delay(ms: number, get?: StoreGet, runId?: number, actionId?: string) {
 
 async function speakText(
   text: string,
-  mute: boolean,
   rate: number | undefined,
   set: StoreSet,
   get: StoreGet,
   runId: number,
   actionId: string
 ) {
-  if (mute) {
-    await delay(50, get, runId, actionId)
-    return
-  }
-
   const voice = get().meta.voice?.trim() || null
   const wordsPerMinute = rate && rate > 0 ? Math.round(175 * rate) : null
   const speechFile = await window.smh.synthesizeSpeechToFile(text, {
