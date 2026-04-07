@@ -23,6 +23,9 @@ declare global {
         text: string,
         options?: { voice?: string | null; rate?: number | null }
       ) => Promise<{ mimeType: string; base64Audio: string }>
+      primeTtsCache: (
+        requests: Array<{ text: string; voice?: string | null; rate?: number | null }>
+      ) => Promise<{ warmed: number }>
       getBootState: () => Promise<ProjectBootState>
       createProject: (input: { name: string; rootPath: string }) => Promise<ProjectRecord>
       updateProject: (projectId: number, input: { name: string; rootPath: string }) => Promise<ProjectRecord>

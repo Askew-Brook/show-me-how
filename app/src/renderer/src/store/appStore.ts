@@ -43,6 +43,12 @@ interface AppConfig {
   defaultNavigationTimeoutMs: number
 }
 
+interface TtsCacheRequest {
+  text: string
+  voice?: string | null
+  rate?: number | null
+}
+
 interface TtsPlaybackState {
   runId: number | null
   text: string | null
@@ -126,6 +132,8 @@ let activeSkippableAction: { runId: number; actionId: string; skip: () => void }
 let pendingSkipCount = 0
 const TTS_TRAILING_SILENCE_MS = 180
 const TTS_END_GRACE_MS = 120
+const TTS_STALL_BUFFER_MS = 1000
+const TTS_MIN_FALLBACK_TIMEOUT_MS = 4000
 
 class RunAbortedError extends Error {
   constructor() {
@@ -406,6 +414,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       layoutMode: validation.meta.startLayout || get().layoutMode
     })
 
+    if (!validation.hasErrors) {
+      void primeTtsCacheForValidation(validation)
+    }
+
     return !validation.hasErrors
   },
 
@@ -576,6 +588,52 @@ async function validateScriptAgainstProject(script: string, project?: ProjectRec
   }
 }
 
+function buildTtsCacheRequests(actions: ParsedAction[], meta: PresentationMeta): TtsCacheRequest[] {
+  const voice = meta.voice?.trim() || null
+  const rate = meta.rate && meta.rate > 0 ? Math.round(175 * meta.rate) : null
+  const seen = new Set<string>()
+  const requests: TtsCacheRequest[] = []
+
+  for (const action of actions) {
+    if (action.command !== 'tts') {
+      continue
+    }
+
+    const [text] = action.args as [string]
+    const normalizedText = text.trim()
+    if (!normalizedText) {
+      continue
+    }
+
+    const key = JSON.stringify({ text: normalizedText, voice, rate })
+    if (seen.has(key)) {
+      continue
+    }
+
+    seen.add(key)
+    requests.push({
+      text: normalizedText,
+      voice,
+      rate
+    })
+  }
+
+  return requests
+}
+
+async function primeTtsCacheForValidation(validation: { actions: ParsedAction[]; meta: PresentationMeta }) {
+  const requests = buildTtsCacheRequests(validation.actions, validation.meta)
+  if (requests.length === 0) {
+    return
+  }
+
+  try {
+    await window.smh.primeTtsCache(requests)
+  } catch {
+    // Keep warmup best-effort so failed pre-generation never blocks editing or playback.
+  }
+}
+
 function buildValidationFailureAlert(scriptPath: string, project: ProjectRecord, diagnostics: Diagnostic[]) {
   const errorDiagnostics = diagnostics.filter((diagnostic) => diagnostic.severity === 'error')
   const summary = errorDiagnostics
@@ -664,6 +722,8 @@ async function openRecentPresentationEntry(entry: RecentPresentationEntry, set: 
     tts: createDefaultTtsState(state.tts),
     projects: state.projects.map((item) => (item.id === project.id ? project : item)).sort(compareProjects)
   }))
+
+  void primeTtsCacheForValidation(validation)
 }
 
 async function loadExternalScript(scriptPath: string) {
@@ -1199,11 +1259,15 @@ async function speakText(
     let finished = false
     let playedMs = 0
     let lastTickTime = audioContext.currentTime
+    let stallTimeoutId: number | null = null
 
     const cleanup = () => {
       if (finished) return
       finished = true
       window.clearInterval(intervalId)
+      if (stallTimeoutId != null) {
+        window.clearTimeout(stallTimeoutId)
+      }
       source.onended = null
       source.disconnect()
       gainNode.disconnect()
@@ -1285,6 +1349,12 @@ async function speakText(
         resolve()
       }, TTS_END_GRACE_MS)
     }
+
+    stallTimeoutId = window.setTimeout(() => {
+      pushLog(set, 'warn', 'TTS playback stalled; continuing to the next step.', actionId)
+      cleanup()
+      resolve()
+    }, Math.max(durationMs + TTS_END_GRACE_MS + TTS_STALL_BUFFER_MS, TTS_MIN_FALLBACK_TIMEOUT_MS))
 
     try {
       source.start(0)

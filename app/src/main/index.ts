@@ -1,9 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { execFile } from 'node:child_process'
 import http from 'node:http'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -39,11 +39,22 @@ interface NormalizedProjectInput {
   rootPath: string
 }
 
+interface TtsSynthesisOptions {
+  voice?: string | null
+  rate?: number | null
+}
+
+interface TtsCacheRequest {
+  text: string
+  voice?: string | null
+  rate?: number | null
+}
 
 let database: DatabaseSync | null = null
 let mainWindow: BrowserWindow | null = null
 let pendingScriptPath: string | null = null
 let controlServer: http.Server | null = null
+const activeTtsSyntheses = new Map<string, Promise<Buffer>>()
 
 const controlRequests = new Map<
   string,
@@ -78,6 +89,133 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+}
+
+function normalizeTtsOptions(options?: TtsSynthesisOptions) {
+  const voice = options?.voice?.trim() || null
+  const rate = options?.rate == null ? null : Math.max(80, Math.min(360, Math.round(options.rate)))
+
+  return {
+    voice,
+    rate
+  }
+}
+
+function getTtsCachePath(text: string, options?: TtsSynthesisOptions) {
+  const normalized = normalizeTtsOptions(options)
+  const cacheKey = createHash('sha256')
+    .update(
+      JSON.stringify({
+        engine: 'macos-say',
+        voice: normalized.voice,
+        rate: normalized.rate,
+        text
+      })
+    )
+    .digest('hex')
+
+  return path.join(app.getPath('userData'), 'tts-cache', `${cacheKey}.wav`)
+}
+
+async function synthesizeSpeechBuffer(text: string, options?: TtsSynthesisOptions) {
+  if (process.platform !== 'darwin') {
+    throw new Error('System TTS file synthesis is currently only implemented for macOS')
+  }
+
+  const cachePath = getTtsCachePath(text, options)
+  const cachedBuffer = await readCachedTtsBuffer(cachePath)
+  if (cachedBuffer) {
+    return cachedBuffer
+  }
+
+  const synthesisKey = cachePath
+  const inFlight = activeTtsSyntheses.get(synthesisKey)
+  if (inFlight) {
+    return inFlight
+  }
+
+  const synthesis = (async () => {
+    const normalized = normalizeTtsOptions(options)
+    const aiffPath = path.join(app.getPath('temp'), `show-me-how-tts-${randomUUID()}.aiff`)
+    const wavPath = path.join(app.getPath('temp'), `show-me-how-tts-${randomUUID()}.wav`)
+    const args = ['-o', aiffPath]
+
+    if (normalized.voice) {
+      args.push('-v', normalized.voice)
+    }
+
+    if (normalized.rate) {
+      args.push('-r', String(normalized.rate))
+    }
+
+    args.push(text)
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        execFile('say', args, (error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve()
+        })
+      })
+
+      await new Promise<void>((resolve, reject) => {
+        execFile('afconvert', ['-f', 'WAVE', '-d', 'LEI16@22050', aiffPath, wavPath], (error) => {
+          if (error) {
+            reject(error)
+            return
+          }
+          resolve()
+        })
+      })
+
+      const audioBuffer = await readFile(wavPath)
+      await mkdir(path.dirname(cachePath), { recursive: true })
+      await writeFile(cachePath, audioBuffer)
+      return audioBuffer
+    } finally {
+      for (const tempPath of [aiffPath, wavPath]) {
+        try {
+          await unlink(tempPath)
+        } catch {
+          // Ignore temp file cleanup errors.
+        }
+      }
+    }
+  })()
+
+  activeTtsSyntheses.set(synthesisKey, synthesis)
+
+  try {
+    return await synthesis
+  } finally {
+    activeTtsSyntheses.delete(synthesisKey)
+  }
+}
+
+async function readCachedTtsBuffer(cachePath: string) {
+  try {
+    return await readFile(cachePath)
+  } catch {
+    return null
+  }
+}
+
+async function warmTtsCache(requests: TtsCacheRequest[]) {
+  for (const request of requests) {
+    const text = request.text.trim()
+    if (!text) {
+      continue
+    }
+
+    await synthesizeSpeechBuffer(text, request)
+  }
+
+  return {
+    warmed: requests.length
+  }
 }
 
 function getDatabase() {
@@ -792,63 +930,18 @@ ipcMain.handle('fs:fileExists', async (_event, filePath: string, projectRootPath
 
 ipcMain.handle(
   'tts:synthesizeToFile',
-  async (_event, text: string, options?: { voice?: string | null; rate?: number | null }) => {
-    if (process.platform !== 'darwin') {
-      throw new Error('System TTS file synthesis is currently only implemented for macOS')
-    }
-
-    const aiffPath = path.join(app.getPath('temp'), `show-me-how-tts-${randomUUID()}.aiff`)
-    const wavPath = path.join(app.getPath('temp'), `show-me-how-tts-${randomUUID()}.wav`)
-    const args = ['-o', aiffPath]
-    const voice = options?.voice?.trim()
-    const rate = options?.rate == null ? null : Math.max(80, Math.min(360, Math.round(options.rate)))
-
-    if (voice) {
-      args.push('-v', voice)
-    }
-
-    if (rate) {
-      args.push('-r', String(rate))
-    }
-
-    args.push(text)
-
-    await new Promise<void>((resolve, reject) => {
-      execFile('say', args, (error) => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve()
-      })
-    })
-
-    await new Promise<void>((resolve, reject) => {
-      execFile('afconvert', ['-f', 'WAVE', '-d', 'LEI16@22050', aiffPath, wavPath], (error) => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve()
-      })
-    })
-
-    const audioBuffer = await readFile(wavPath)
-
-    for (const tempPath of [aiffPath, wavPath]) {
-      try {
-        await unlink(tempPath)
-      } catch {
-        // Ignore temp file cleanup errors.
-      }
-    }
-
+  async (_event, text: string, options?: TtsSynthesisOptions) => {
+    const audioBuffer = await synthesizeSpeechBuffer(text, options)
     return {
       mimeType: 'audio/wav',
       base64Audio: audioBuffer.toString('base64')
     }
   }
 )
+
+ipcMain.handle('tts:primeCache', async (_event, requests: TtsCacheRequest[]) => {
+  return warmTtsCache(requests)
+})
 
 ipcMain.handle('app:getConfig', async () => {
   await mkdir(app.getPath('userData'), { recursive: true })

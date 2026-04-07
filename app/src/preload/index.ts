@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('smh', {
   getConfig: () => ipcRenderer.invoke('app:getConfig'),
   synthesizeSpeechToFile: (text: string, options?: { voice?: string | null; rate?: number | null }) =>
     ipcRenderer.invoke('tts:synthesizeToFile', text, options),
+  primeTtsCache: (requests: Array<{ text: string; voice?: string | null; rate?: number | null }>) =>
+    ipcRenderer.invoke('tts:primeCache', requests),
   getBootState: () => ipcRenderer.invoke('projects:getBootState'),
   createProject: (input: { name: string; rootPath: string }) => ipcRenderer.invoke('projects:create', input),
   updateProject: (projectId: number, input: { name: string; rootPath: string }) =>
