@@ -17,8 +17,6 @@ Use this skill when you need to:
 
 - The **ShowMeHow app must already be running**.
 - The current prototype is **code walkthroughs only**.
-- **Do not use browser commands** in scripts for the current prototype.
-- Browser panels are currently disabled in the app UI.
 - Project-relative file paths are preferred in `open_code()`.
 - The app now supports external `.smh` open flow and will try to auto-play after opening when project selection is already resolved.
 
@@ -147,21 +145,6 @@ Read the DSL notes in [references/smh-dsl.md](references/smh-dsl.md).
 - `pause(seconds)`
 - `tts(text)`
 - `note(text)`
-
-### Avoid these commands in the current prototype
-- `open_browser`
-- `click_text`
-- `type_text`
-- `wait_for_text`
-- `wait_for_navigation`
-- `highlight_text`
-- `press_key`
-- `browser_back`
-- `browser_forward`
-- `browser_reload`
-- all other browser actions
-
-They are disabled in the app right now.
 
 ## Good script style
 

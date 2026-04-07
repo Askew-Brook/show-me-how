@@ -39,6 +39,7 @@ interface NormalizedProjectInput {
   rootPath: string
 }
 
+
 let database: DatabaseSync | null = null
 let mainWindow: BrowserWindow | null = null
 let pendingScriptPath: string | null = null
@@ -245,7 +246,9 @@ function normalizeRecentPresentationEntry(value: unknown): RecentPresentationEnt
 
 function getRecentPresentationPaths() {
   const db = getDatabase()
-  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('recentPresentationPaths') as { value: string } | undefined
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('recentPresentationPaths') as
+    | { value: string }
+    | undefined
   if (!row) return []
 
   try {

@@ -5,8 +5,6 @@ This is the **current prototype** DSL guidance.
 ## Prototype scope
 
 - code walkthroughs only
-- no browser automation
-- browser panels are currently disabled in the app UI
 - external `.smh` open flow exists, but scripts should still stay deterministic and code-focused
 
 ## Core commands
@@ -97,20 +95,6 @@ Keep it short and concrete.
 
 ### `note(text)`
 Non-executable note shown in the timeline/debug flow.
-
-## Commands to avoid right now
-
-These are disabled in the current prototype:
-- `open_browser`
-- `click_text`
-- `type_text`
-- `wait_for_text`
-- `wait_for_navigation`
-- `highlight_text`
-- `press_key`
-- `browser_back`
-- `browser_forward`
-- `browser_reload`
 
 ## Writing style guidance
 
